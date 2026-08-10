@@ -46,8 +46,14 @@ export function renderScoreboard(board: Scoreboard, now = new Date()): string | 
   return lines.join('\n');
 }
 
-/** Two decimals under 10x, where the difference between 1.4x and 1.8x is the whole story. */
-function multiple(value: number): string {
+/**
+ * Two decimals under 10x, where the difference between 1.4x and 1.8x is the whole story.
+ *
+ * Exported because the agent quotes the same figures conversationally, and a multiple written
+ * one way on the pinned board and another way in a reply is two numbers as far as the reader
+ * is concerned — about calls they can go and check.
+ */
+export function multiple(value: number): string {
   return value >= 10 ? `${value.toFixed(1)}x` : `${value.toFixed(2)}x`;
 }
 

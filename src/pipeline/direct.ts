@@ -1,3 +1,4 @@
+import type { Agent } from '../agent/agent';
 import type { CompetitionConfig } from '../config';
 import { escapeHtml } from '../format/call';
 import { renderLeaderboard, renderStanding } from '../format/leaderboard';
@@ -18,6 +19,14 @@ export interface DirectDeps {
   competition: CompetitionConfig;
   /** For the help text, so a stranger who finds the bot is told where the calls actually are. */
   channelUrl?: string;
+  /**
+   * Answers questions that are not commands — the record, the worst call, what we screen for.
+   *
+   * Strictly additive. It only ever runs on text that reached the help fallback anyway, and
+   * anything it does not recognise still gets `help()`, so switching it off changes nothing
+   * except how much of a real question goes unanswered.
+   */
+  agent?: Agent;
 }
 
 /**
@@ -33,7 +42,7 @@ export interface DirectDeps {
  * a bot that has died, and the person typing has no way to tell which.
  */
 export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Promise<void> {
-  const { api, promo, member, competition, channelUrl } = deps;
+  const { api, promo, member, competition, channelUrl, agent } = deps;
 
   const reply = async (chatId: string, text: string, keyboard?: Button[][]) => {
     await api
@@ -140,8 +149,28 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
       const bare = dm.text.trim();
       if (classifyAddress(bare)) return offer(dm, bare);
 
-      // Anything else. Someone who types "hey" gets told what this thing is, which is the
-      // entire reason for having the DM surface open.
+      /**
+       * Anything else is a question rather than a command, and most of them are the same six
+       * questions. The agent answers the ones it has a real lookup for and hands back the rest.
+       *
+       * A greeting and an unrecognised question both fall through to `help()` on purpose: in a
+       * one-to-one chat, somebody who has just found the bot needs orienting more than they
+       * need an apology, and `help()` is the only thing here that knows which surfaces are
+       * actually switched on.
+       */
+      const said = agent?.ask({
+        text: bare,
+        userId: dm.fromId,
+        chatId: dm.chatId,
+        surface: 'dm',
+        addressed: true,
+      });
+      if (said && said.intent !== 'greeting' && said.intent !== 'unknown') {
+        return reply(dm.chatId, said.text);
+      }
+
+      // Someone who types "hey" gets told what this thing is, which is the entire reason for
+      // having the DM surface open.
       return reply(dm.chatId, help());
     }
 

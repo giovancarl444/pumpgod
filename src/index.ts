@@ -9,6 +9,7 @@ import {
   SOURCES_PATH,
   type AppConfig,
 } from './config';
+import { createAgent } from './agent/agent';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
 import { PickAlerts } from './social/alerts';
@@ -280,12 +281,24 @@ async function runBot(config: AppConfig) {
   member.members.load();
 
   const social = loadSocial();
+
+  // Reads the tracker live rather than `Tracker.read()`: the file lags a poll behind, and an
+  // agent quoting a number the channel has already moved past is the first way it becomes
+  // untrustworthy. There is no per-chat state in it, which is what makes one agent across
+  // several groups a matter of passing more chat ids and nothing else.
+  const agent = createAgent({
+    calls: () => tracker.list(),
+    competition,
+    channelUrl: social.channelUrl,
+  });
+
   const handleDirect = createDirectHandler({
     api,
     promo,
     member: competition.enabled ? member : undefined,
     competition,
     channelUrl: social.channelUrl,
+    agent,
   });
 
   // The same two verbs, arriving by tap instead of by typing. A press carries no authority
