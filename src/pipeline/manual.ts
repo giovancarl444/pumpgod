@@ -63,7 +63,14 @@ export async function resolveManualCall(
   // round trip to an API that was never going to have it.
   const kind = classifyAddress(query)?.kind;
   if (kind && chains?.length && !chains.some((c) => CHAIN_KIND[c] === kind)) {
-    return { ok: false, reason: `that is ${kind === 'evm' ? 'an EVM' : `a ${kind}`} address — we are only calling ${chains.join('/')} right now` };
+    // Naming the address is the whole value of the message. What gets pasted is often a whole
+    // block of text, and the address picked out of it is not always the one the sender meant —
+    // so "that is an EVM address" reads as a bug in the chain gate rather than as what it is,
+    // which is a report of what was read out of the paste.
+    return {
+      ok: false,
+      reason: `that is ${kind === 'evm' ? 'an EVM' : `a ${kind}`} address (${short(query)}) — we are only calling ${chains.join('/')} right now`,
+    };
   }
 
   const resolved = await asToken(query, timeoutMs);
