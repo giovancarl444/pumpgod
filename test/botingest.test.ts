@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BotApi } from '../src/telegram/botapi';
 import { BotAdmins, startBotIngest } from '../src/telegram/botingest';
+import type { DirectMessage, PaidOrder, PreCheckout } from '../src/telegram/botingest';
 import type { ControlChats, IncomingCommand, IncomingReaction } from '../src/telegram/ingest';
 
 /**
@@ -18,6 +19,20 @@ interface Update {
   message?: unknown;
   channel_post?: unknown;
   message_reaction?: unknown;
+  pre_checkout_query?: unknown;
+}
+
+/** A one-to-one chat with the bot, which anybody on Telegram can open. */
+function dm(update_id: number, body: string, fromId = 77): Update {
+  return {
+    update_id,
+    message: {
+      message_id: update_id,
+      chat: { id: fromId, type: 'private' },
+      from: { id: fromId, username: 'stranger' },
+      text: body,
+    },
+  };
 }
 
 function text(update_id: number, chatId: string, body: string, fromId = 42): Update {
@@ -34,6 +49,9 @@ function text(update_id: number, chatId: string, body: string, fromId = 42): Upd
 function poll(batch: Update[], control: ControlChats = CONTROL, backlog: Update[] = []) {
   const commands: IncomingCommand[] = [];
   const reactions: IncomingReaction[] = [];
+  const directs: DirectMessage[] = [];
+  const checkouts: PreCheckout[] = [];
+  const paid: PaidOrder[] = [];
   const asked: Array<Record<string, unknown>> = [];
   let handle: { stop(): void } | undefined;
   let served = 0;
@@ -57,9 +75,12 @@ function poll(batch: Update[], control: ControlChats = CONTROL, backlog: Update[
   handle = startBotIngest(api, control, {
     onCommand: (cmd) => commands.push(cmd),
     onReaction: (reaction) => reactions.push(reaction),
+    onDirect: (dm) => directs.push(dm),
+    onPreCheckout: (q) => checkouts.push(q),
+    onPaid: (p) => paid.push(p),
   });
 
-  return { commands, reactions, asked, idle };
+  return { commands, reactions, directs, checkouts, paid, asked, idle };
 }
 
 describe('coming back up', () => {
@@ -133,6 +154,96 @@ describe('what counts as a command', () => {
     await run.idle;
 
     expect(run.commands).toHaveLength(0);
+  });
+});
+
+/**
+ * The DM surface, which is open to everybody on Telegram — no membership, no invitation, no
+ * admin check possible. Everything here is about keeping that crowd on the other side of a
+ * wall from the machinery that publishes.
+ */
+describe('a stranger in the bot\'s DMs', () => {
+  // The one that would be catastrophic and completely silent. `createCommandHandler` checks
+  // rights only for the public channel and treats everything else as the trusted war room, so
+  // a DM reaching `onCommand` is anyone on Telegram able to publish a call in our channel.
+  it('can never reach the command handler, whatever they type', async () => {
+    const run = poll([dm(10, '/signal 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin')]);
+    await run.idle;
+
+    expect(run.commands).toHaveLength(0);
+    expect(run.directs).toHaveLength(1);
+  });
+
+  it('is handed over with who sent it, so a reply has somewhere to go', async () => {
+    const run = poll([dm(11, '/promote abc')]);
+    await run.idle;
+
+    expect(run.directs[0]).toMatchObject({ text: '/promote abc', chatId: '77', fromId: '77', handle: '@stranger' });
+  });
+
+  // A war room set up as a one-to-one chat with the bot is a perfectly reasonable way to run
+  // this, and it must keep working as a control chat rather than being demoted to a DM.
+  it('does not swallow a war room that happens to be a private chat', async () => {
+    const control: ControlChats = { warRoomId: '77', channelId: CHANNEL };
+    const run = poll([dm(12, '/signal abc')], control);
+    await run.idle;
+
+    expect(run.commands).toHaveLength(1);
+    expect(run.directs).toHaveLength(0);
+  });
+});
+
+describe('being paid', () => {
+  // Telegram delivers neither of these unless they are asked for by name, and without the
+  // checkout query a payment cannot complete at all.
+  it('asks for the updates a payment needs', async () => {
+    const run = poll([]);
+    await run.idle;
+
+    expect(run.asked[1]!.allowed_updates).toContain('pre_checkout_query');
+  });
+
+  it('hands over a checkout query with the payload that names the order', async () => {
+    const run = poll([
+      {
+        update_id: 20,
+        pre_checkout_query: {
+          id: 'q99',
+          from: { id: 77 },
+          invoice_payload: 'order-1',
+          total_amount: 1000,
+          currency: 'XTR',
+        },
+      },
+    ]);
+    await run.idle;
+
+    expect(run.checkouts[0]).toMatchObject({ id: 'q99', payload: 'order-1', amount: 1000, currency: 'XTR' });
+  });
+
+  // A receipt is a message with no text on it. Read after the text check, it would be dropped —
+  // and a dropped receipt is money taken for something that is never delivered.
+  it('reads a receipt even though it carries no text', async () => {
+    const run = poll([
+      {
+        update_id: 21,
+        message: {
+          message_id: 21,
+          chat: { id: 77, type: 'private' },
+          from: { id: 77, username: 'buyer' },
+          successful_payment: {
+            currency: 'XTR',
+            total_amount: 1000,
+            invoice_payload: 'order-1',
+            telegram_payment_charge_id: 'charge_abc',
+          },
+        },
+      },
+    ]);
+    await run.idle;
+
+    expect(run.paid[0]).toMatchObject({ payload: 'order-1', chargeId: 'charge_abc', fromId: '77', amount: 1000 });
+    expect(run.directs).toHaveLength(0);
   });
 });
 

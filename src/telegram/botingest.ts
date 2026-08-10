@@ -14,21 +14,100 @@ interface BotUpdate {
     user?: { id: number };
     new_reaction?: Array<{ type: string; emoji?: string }>;
   };
+  pre_checkout_query?: {
+    id: string;
+    from: BotUser;
+    invoice_payload: string;
+    total_amount: number;
+    currency: string;
+  };
+}
+
+interface BotUser {
+  id: number;
+  username?: string;
+  first_name?: string;
 }
 
 interface BotMessage {
   message_id: number;
   chat: { id: number; type: string };
-  from?: { id: number };
+  from?: BotUser;
   text?: string;
   caption?: string;
   /** Present only in a group with Topics on, and only outside General. */
   message_thread_id?: number;
+  /** Telegram's receipt. Arrives as an ordinary message with no text on it at all. */
+  successful_payment?: {
+    currency: string;
+    total_amount: number;
+    invoice_payload: string;
+    telegram_payment_charge_id: string;
+  };
+}
+
+/**
+ * Somebody talking to the bot one-to-one.
+ *
+ * Kept apart from `IncomingCommand` deliberately, because it is the opposite kind of thing: a
+ * command comes from a chat we control and is trusted on that basis, while this is from anyone
+ * on Telegram who found the bot. Merging the two would put `/signal` from a stranger's DM on
+ * the same footing as one typed in the war room.
+ */
+export interface DirectMessage {
+  text: string;
+  chatId: string;
+  messageId: number;
+  fromId: string;
+  /** For addressing somebody by name, and for naming who paid on a refund. */
+  handle?: string;
+  recvAt: number;
+}
+
+/**
+ * Telegram's last word before it moves the money, and the only chance to refuse.
+ *
+ * **Must be answered inside 10 seconds.** Miss it and the charge fails with an error the buyer
+ * cannot act on — so anything slow belongs before the invoice, not here.
+ */
+export interface PreCheckout {
+  id: string;
+  fromId: string;
+  payload: string;
+  /** In whatever `currency` says. For Stars that is a whole number of them. */
+  amount: number;
+  currency: string;
+}
+
+/** The money has arrived. From here it is deliver or refund; there is no third option. */
+export interface PaidOrder {
+  chatId: string;
+  fromId: string;
+  handle?: string;
+  payload: string;
+  amount: number;
+  currency: string;
+  /** What `refundStarPayment` needs, and the only proof the charge ever happened. */
+  chargeId: string;
+  recvAt: number;
 }
 
 export interface BotIngestHandlers {
   onCommand(cmd: IncomingCommand): void;
   onReaction(reaction: IncomingReaction): void;
+  /**
+   * A one-to-one message from anybody. Leaving this off is how DMs stay invisible, which is
+   * the state the bot shipped in and the right default: a chat nobody is watching is a support
+   * queue that silently accumulates.
+   */
+  onDirect?(dm: DirectMessage): void;
+  onPreCheckout?(query: PreCheckout): void;
+  onPaid?(order: PaidOrder): void;
+}
+
+function handleOf(user: BotUser | undefined): string | undefined {
+  if (!user) return undefined;
+  return user.username ? `@${user.username}` : user.first_name;
 }
 
 /**
@@ -103,14 +182,70 @@ export function startBotIngest(
 
   const handle = (update: BotUpdate) => {
     const recvAt = performance.now();
+
+    // Answered before anything else, because the 10-second deadline on it is the only one in
+    // this file, and everything below is a queue it would be waiting behind.
+    const checkout = update.pre_checkout_query;
+    if (checkout) {
+      handlers.onPreCheckout?.({
+        id: checkout.id,
+        fromId: String(checkout.from.id),
+        payload: checkout.invoice_payload,
+        amount: checkout.total_amount,
+        currency: checkout.currency,
+      });
+      return;
+    }
+
     const post = update.channel_post;
     const message = post ?? update.message;
 
     if (message) {
-      const text = message.text ?? message.caption;
       const chatId = String(message.chat.id);
+      const isControl = chatId === warRoomId || chatId === channelId;
+
+      // A receipt carries no text at all, so it has to be read before the text check below
+      // drops it — and losing this update means money taken for something never delivered.
+      const paid = message.successful_payment;
+      if (paid && message.from) {
+        handlers.onPaid?.({
+          chatId,
+          fromId: String(message.from.id),
+          handle: handleOf(message.from),
+          payload: paid.invoice_payload,
+          amount: paid.total_amount,
+          currency: paid.currency,
+          chargeId: paid.telegram_payment_charge_id,
+          recvAt,
+        });
+        return;
+      }
+
+      const text = message.text ?? message.caption;
       if (!text) return;
-      if (chatId !== warRoomId && chatId !== channelId) return;
+
+      /**
+       * Anything that is not a control chat is at most a DM, and DMs go somewhere else
+       * entirely. `createCommandHandler` checks rights only for the public channel and trusts
+       * everything else as the war room — so routing a stranger's DM into `onCommand` would
+       * let anybody on Telegram publish a call by messaging the bot privately.
+       *
+       * The control check comes first so that a war room configured as a one-to-one chat with
+       * the bot — which is a perfectly reasonable way to set it up — keeps working.
+       */
+      if (!isControl) {
+        if (message.chat.type === 'private' && message.from) {
+          handlers.onDirect?.({
+            text,
+            chatId,
+            messageId: message.message_id,
+            fromId: String(message.from.id),
+            handle: handleOf(message.from),
+            recvAt,
+          });
+        }
+        return;
+      }
 
       // The only way to read a topic's id off Telegram at all. There is no method that lists
       // them, and the id is not the number in a copied message link, so without this the
@@ -167,9 +302,11 @@ export function startBotIngest(
           {
             offset,
             timeout: POLL_SECONDS,
-            // Reactions are not delivered at all unless they are asked for by name, which is
-            // what the 🚀 approval in the war room rides on.
-            allowed_updates: ['message', 'channel_post', 'message_reaction'],
+            // Named one by one because Telegram's default list quietly leaves out both the
+            // reaction the war room's 🚀 approval rides on and the pre-checkout query, which
+            // has to be answered for a payment to complete at all. A receipt for a completed
+            // payment arrives as an ordinary `message`, so it needs no entry of its own.
+            allowed_updates: ['message', 'channel_post', 'message_reaction', 'pre_checkout_query'],
           },
           (POLL_SECONDS + 5) * 1000,
         );

@@ -17,9 +17,33 @@ const RETIRE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** Below this, the pool is gone in any practical sense. */
 const RUG_LIQUIDITY_USD = 500;
 
-export type Outcome = 'called' | 'staged' | 'shadow' | 'dry-run' | 'duplicate';
+export type Outcome =
+  | 'called'
+  | 'staged'
+  | 'shadow'
+  | 'dry-run'
+  | 'duplicate'
+  /** Somebody paid for the slot. Tracked so it can be answered for, never counted as ours. */
+  | 'promo';
 
-const RANK: Record<Outcome, number> = { duplicate: 0, shadow: 1, 'dry-run': 2, staged: 3, called: 4 };
+/**
+ * Which outcome wins when the same source calls the same coin twice. Higher takes precedence.
+ *
+ * `promo` sits at the top, above `called`, and that is the point rather than a ranking of
+ * importance: it makes the outcome **sticky**, so no later code path can promote a paid slot
+ * into a call of ours. Combined with its own `sourceId`, which keeps it in a separate record
+ * from anything we called ourselves, a bought card cannot reach the scoreboard, the X feed or
+ * the milestone replies by any route — `isPublished` asks for `called` and this can never
+ * become it.
+ */
+const RANK: Record<Outcome, number> = {
+  duplicate: 0,
+  shadow: 1,
+  'dry-run': 2,
+  staged: 3,
+  called: 4,
+  promo: 5,
+};
 
 export interface TrackedCall {
   id: string;

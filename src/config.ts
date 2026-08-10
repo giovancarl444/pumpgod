@@ -141,6 +141,38 @@ export interface SocialConfig {
   postIntervalMs: number;
 }
 
+/**
+ * Selling a promotion slot in the channel.
+ *
+ * Off by default, and it has to be: switching it on changes what the channel is, and that is
+ * a decision rather than a setting somebody inherits from a default.
+ *
+ * Kept out of `AppConfig` for the same reason `SocialConfig` is — it belongs to a surface that
+ * happens to run in the same process, not to the business of calling coins.
+ */
+export interface PromoConfig {
+  enabled: boolean;
+  /**
+   * The price, in Telegram Stars.
+   *
+   * Stars are the only currency a bot may charge in for something delivered inside Telegram,
+   * and Telegram sets the rate. It has been roughly €0.02 a Star to buy, so ~1000 Stars is
+   * the €20 mark — but the app stores take their cut of the purchase and the payout rate
+   * moves, so check the current figure before trusting the conversion.
+   */
+  priceStars: number;
+  /** Slots per rolling 24h. The number that decides whether this is a channel or a billboard. */
+  dailyLimit: number;
+}
+
+export function loadPromo(): PromoConfig {
+  return {
+    enabled: bool('PROMO_ENABLED', false),
+    priceStars: num('PROMO_PRICE_STARS', 1000),
+    dailyLimit: num('PROMO_DAILY_LIMIT', 3),
+  };
+}
+
 export function loadSocial(): SocialConfig {
   return {
     channelUrl: process.env.CHANNEL_URL?.trim() || undefined,

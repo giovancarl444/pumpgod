@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH, type AppConfig } from './config';
+import { loadConfig, loadPromo, loadSocial, loadSources, normalisePeerId, SOURCES_PATH, type AppConfig } from './config';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
 import { Pinned } from './social/pinned';
@@ -13,6 +13,7 @@ import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
 import { createCommandHandler } from './pipeline/command';
+import { createPromoHandlers } from './pipeline/promo';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
 import { log } from './log';
@@ -236,10 +237,22 @@ async function runBot(config: AppConfig) {
     warRoomPeer,
   });
 
+  // DMs are a separate handler from commands, not a flag on the same one. `handleCommand`
+  // checks rights only for the public channel and trusts everything else as the war room, so
+  // a `/signal` arriving from a stranger's DM must never reach it.
+  const promoConfig = loadPromo();
+  const promo = createPromoHandlers({ api, transport, config, promo: promoConfig, channelPeer, tracker });
+
   const ingest = startBotIngest(
     api,
     { channelId: channelPeer.id, warRoomId: warRoomPeer?.id },
-    { onCommand: (cmd) => void handleCommand(cmd), onReaction: (r) => router.handleReaction(r) },
+    {
+      onCommand: (cmd) => void handleCommand(cmd),
+      onReaction: (r) => router.handleReaction(r),
+      onDirect: (dm) => void promo.onDirect(dm),
+      onPreCheckout: (q) => void promo.onPreCheckout(q),
+      onPaid: (p) => void promo.onPaid(p),
+    },
   );
 
   const social = loadSocial();
@@ -259,6 +272,12 @@ async function runBot(config: AppConfig) {
   log.info(`pumpgod live · bot mode · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`);
   if (!config.live) log.warn('LIVE=false — calls are logged but never posted. Flip LIVE=true when ready.');
   log.info('type /signal <address> in the channel or the war room to call a coin');
+  if (promoConfig.enabled) {
+    log.info(
+      `📣 paid promotion open · ${promoConfig.priceStars} ⭐ per slot, ${promoConfig.dailyLimit}/day · ` +
+        'posted marked as an advert and kept out of the record',
+    );
+  }
 
   const metrics = setInterval(() => {
     router.sweep();
