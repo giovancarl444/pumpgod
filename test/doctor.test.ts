@@ -223,7 +223,12 @@ describe('credentialChecks', () => {
     expect(credentialChecks({ ...filled, TG_SESSION: '   ' }).map((c) => c.label)).toEqual(['TG_SESSION']);
   });
 
-  it('points at npm run login for the session, which is the only one not on a web page', () => {
-    expect(credentialChecks({ ...filled, TG_SESSION: '' })[0]!.hint).toContain('npm run login');
+  // The session is the one value not sitting on a web page, and the only one whose hint can
+  // send somebody somewhere worse: `npm run login` prints a full account credential to a
+  // terminal, where it gets scrolled past and screenshotted. Setup writes it to .env instead.
+  it('points at npm run setup for the session rather than anything that prints it', () => {
+    const hint = credentialChecks({ ...filled, TG_SESSION: '' })[0]!.hint;
+    expect(hint).toContain('npm run setup');
+    expect(hint).not.toContain('npm run login');
   });
 });

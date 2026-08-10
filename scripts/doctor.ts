@@ -361,7 +361,7 @@ export function credentialChecks(env: NodeJS.ProcessEnv = process.env): Check[] 
   const needed: Array<[string, string]> = [
     ['TG_API_ID', 'https://my.telegram.org → API development tools → copy "App api_id"'],
     ['TG_API_HASH', 'the "App api_hash" on that same page'],
-    ['TG_SESSION', 'run `npm run login`, then paste the TG_SESSION line it prints into .env'],
+    ['TG_SESSION', 'log in with `npm run setup` — it writes the session itself, never printing it'],
   ];
 
   return needed

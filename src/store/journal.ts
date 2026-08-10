@@ -12,15 +12,27 @@ class Journal {
   private pending: string[] = [];
   private timer?: NodeJS.Timeout;
   private day = '';
+  private dir = resolve(ROOT, 'data');
+
+  /**
+   * Write somewhere other than `data/`. Tests use it: a suite that exercises the router writes
+   * hundreds of fixture calls, and `npm run replay` re-reads these files to re-run parser
+   * changes against real traffic. Fixtures buried in there make the day they landed unreadable.
+   */
+  useDir(dir: string) {
+    this.stream?.end();
+    this.stream = undefined;
+    this.day = '';
+    this.dir = dir;
+  }
 
   private rotate() {
     const today = new Date().toISOString().slice(0, 10);
     if (today === this.day && this.stream) return;
     this.stream?.end();
     this.day = today;
-    const dir = resolve(ROOT, 'data');
-    mkdirSync(dir, { recursive: true });
-    this.stream = createWriteStream(resolve(dir, `journal-${today}.jsonl`), { flags: 'a' });
+    mkdirSync(this.dir, { recursive: true });
+    this.stream = createWriteStream(resolve(this.dir, `journal-${today}.jsonl`), { flags: 'a' });
   }
 
   write(kind: string, payload: Record<string, unknown>) {
