@@ -135,11 +135,32 @@ async function candles(url: string, label: string, timeoutMs: number): Promise<n
  * server-side, so this costs the same single request whether the post is five minutes or five
  * hours old.
  */
+/**
+ * Which side of the pool the candles should be priced in.
+ *
+ * A pool has two tokens and GeckoTerminal quotes the one *it* calls base. That need not be the
+ * one we are asking about, and DexScreener need not agree with it about which is which — so
+ * without this the answer is a real, current, plausible price belonging to a different coin.
+ *
+ * SPX6900 found it. The busiest pool was `SPY / SPX6900`, GeckoTerminal's base was SPY, and the
+ * entry price went into the record as **$772.97** against a real price of $0.000119 — six and a
+ * half million times over, on a call marked `entryFromChart: true`, which is the flag that means
+ * "trust this one". The failure has no symptom: nothing is missing, nothing errors, and the
+ * number is not even absurd on its face. SPY really does cost $772.
+ *
+ * Naming the token explicitly is the whole fix — the API will invert the pair for us. It is the
+ * cheapest kind of guard, because it removes the assumption rather than checking it afterwards.
+ */
+function side(token: string | undefined): string {
+  return token ? `&token=${encodeURIComponent(token)}` : '';
+}
+
 export async function priceAt(
   chain: Chain,
   pool: string,
   atMs: number,
   timeoutMs = 8000,
+  token?: string,
 ): Promise<number | undefined> {
   const network = NETWORK[chain];
   if (!network) return undefined;
@@ -150,7 +171,8 @@ export async function priceAt(
   // between Telegram's clock and the chain's.
   const url =
     `${BASE}/networks/${network}/pools/${encodeURIComponent(pool)}/ohlcv/minute` +
-    `?aggregate=1&limit=5&before_timestamp=${at + 120}&currency=usd`;
+    `?aggregate=1&limit=5&before_timestamp=${at + 120}&currency=usd` +
+    side(token);
 
   const list = await candles(url, `at ${pool}`, timeoutMs);
   if (!list?.length) return undefined;
@@ -189,13 +211,15 @@ export async function peakSince(
   pool: string,
   sinceMs: number,
   timeoutMs = 8000,
+  token?: string,
 ): Promise<Peak | undefined> {
   const network = NETWORK[chain];
   if (!network) return undefined;
 
   const url =
     `${BASE}/networks/${network}/pools/${encodeURIComponent(pool)}/ohlcv/minute` +
-    `?aggregate=${AGGREGATE_MIN}&limit=${LIMIT}&currency=usd`;
+    `?aggregate=${AGGREGATE_MIN}&limit=${LIMIT}&currency=usd` +
+    side(token);
 
   const list = await candles(url, `peak ${pool}`, timeoutMs);
   if (!list?.length) return undefined;

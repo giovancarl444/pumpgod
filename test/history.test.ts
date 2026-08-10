@@ -170,3 +170,41 @@ describe('reading a peak off the chart', () => {
     expect(missing).toEqual([]);
   });
 });
+
+/**
+ * A pool has two tokens, and the one GeckoTerminal calls "base" is not always ours.
+ *
+ * The busiest pool for SPX6900 was `SPY / SPX6900`. GeckoTerminal's base was SPY, so the entry
+ * price went into the record as $772.97 against a real price of $0.000119 — six and a half
+ * million times over, on a row flagged `entryFromChart: true`, which is the flag that is
+ * supposed to mean this number is the trustworthy one.
+ *
+ * There is no symptom to catch downstream. Nothing is missing, nothing errors, and $772 is not
+ * an absurd price for a thing called SPY. Naming the token removes the assumption instead of
+ * checking it afterwards, which is why the guard is on the request rather than on the answer.
+ */
+describe('which side of the pool the price comes from', () => {
+  it('names the coin when asking for a price at a moment', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000, 8000, 'So11111111111111111111111111111111111111112');
+    expect(seen[0]).toContain('token=So11111111111111111111111111111111111111112');
+  });
+
+  it('names the coin when asking for a peak', async () => {
+    const seen = serve(candles([[T0 + 60_000, 2]]));
+    await peakSince('solana', POOL, T0, 8000, 'So11111111111111111111111111111111111111112');
+    expect(seen[0]).toContain('token=So11111111111111111111111111111111111111112');
+  });
+
+  it('asks for whatever the pool defaults to when no coin is named', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000);
+    expect(seen[0]).not.toContain('token=');
+  });
+
+  it('escapes the address rather than pasting it into the query', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000, 8000, 'a&limit=999');
+    expect(seen[0]).toContain('token=a%26limit%3D999');
+  });
+});

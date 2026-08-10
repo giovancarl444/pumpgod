@@ -244,7 +244,11 @@ async function seedFor(call: ParsedCall, at: number, entryPriceAt: typeof priceA
   const liveMc = call.stats.marketCapUsd;
   const pool = call.pairAddress;
 
-  const entry = pool ? await entryPriceAt(call.token.chain, pool, at) : undefined;
+  // Named, so the candles come back for this coin rather than whatever the pool's other side
+  // happens to be. See `side` in history.ts — the pair is not always ordered our way.
+  const entry = pool
+    ? await entryPriceAt(call.token.chain, pool, at, undefined, call.token.address)
+    : undefined;
   if (entry === undefined) {
     return {
       calledAt: at,

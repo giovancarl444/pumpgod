@@ -306,3 +306,93 @@ describe('pricing the peak of a call the daemon never held', () => {
     expect(saved.find((c) => c.id === 'shadow-tg:rival-1')?.athPriceUsd).toBe(0.005);
   });
 });
+
+/**
+ * Re-pricing must choose the pool the same way the card did.
+ *
+ * The poll used to take whichever pool advertised the deepest liquidity — the exact fiction
+ * `mainPool` was written to reject. It survived because the two paths look unrelated: one
+ * publishes a card, one re-prices it later, and nobody reads them together.
+ *
+ * PARKIFY exposed it. A Meteora pool claiming $1.07bn of depth and a $1.43bn market cap, on a
+ * coin genuinely worth $229k, off a single transaction in a day. The entry came off the chart
+ * and was correct; every price after it came from the fiction. Five channels had called that
+ * coin, so five of them were about to be credited with a 6,190x — and the peak is the number
+ * the entire scorecard ranks on.
+ */
+describe('choosing the pool to re-price from', () => {
+  const REAL = { liquidity: { usd: 35_000 }, volume: { h24: 120_000 }, priceUsd: '0.000231', marketCap: 229_473 };
+  const FICTION = { liquidity: { usd: 1_070_000_000 }, volume: { h24: 1 }, priceUsd: '1.43', marketCap: 1_431_035_025 };
+
+  function pairs(...rows: Array<Record<string, unknown>>) {
+    return rows.map((r, i) => ({
+      chainId: 'solana',
+      pairAddress: `pool-${i}`,
+      baseToken: { address: 'Coin', name: 'Parkify', symbol: 'PARKIFY' },
+      ...r,
+    }));
+  }
+
+  async function polled(body: unknown): Promise<TrackedCall> {
+    const path = join(mkdtempSync(join(tmpdir(), 'pumpgod-poll-')), 'tracked.json');
+    writeFileSync(path, JSON.stringify([call({ address: 'Coin', chain: 'solana', calledAt: Date.now() })]));
+    vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, json: async () => body }));
+
+    const tracker = new Tracker(path);
+    tracker.load();
+    tracker.start(600_000);
+    await new Promise((r) => setTimeout(r, 30));
+    tracker.stop();
+    return tracker.list()[0]!;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('takes the pool with the trading, not the one advertising depth', async () => {
+    const row = await polled({ pairs: pairs(FICTION, REAL) });
+    expect(row.lastPriceUsd).toBe(0.000231);
+    expect(row.lastMcUsd).toBe(229_473);
+  });
+
+  it('does not let a fiction pool set the peak the scorecard ranks on', async () => {
+    const row = await polled({ pairs: pairs(FICTION, REAL) });
+    // 6,190x against a $229k coin, from one transaction. It must never enter the record.
+    expect(row.athPriceUsd).toBe(0.000231);
+  });
+
+  it('ignores a pool for the same address on another chain', async () => {
+    const row = await polled({
+      pairs: [
+        ...pairs(REAL),
+        {
+          chainId: 'base',
+          pairAddress: 'imposter',
+          baseToken: { address: 'Coin', name: 'Namesake', symbol: 'COIN' },
+          liquidity: { usd: 900_000 },
+          volume: { h24: 5_000_000 },
+          priceUsd: '9.99',
+          marketCap: 50_000_000,
+        },
+      ],
+    });
+    expect(row.lastPriceUsd).toBe(0.000231);
+  });
+
+  /**
+   * Depth is a whole-coin number, so reading it off one pool calls a rug on a coin whose
+   * liquidity is merely spread out. Both pools here sit under the rug floor on their own and
+   * clear it together, which is the only arrangement that tells the two readings apart.
+   */
+  it('sums depth across the coin’s real pools rather than reading one', async () => {
+    const row = await polled({
+      pairs: pairs(
+        { liquidity: { usd: 300 }, volume: { h24: 120_000 }, priceUsd: '0.000231', marketCap: 229_473 },
+        { liquidity: { usd: 300 }, volume: { h24: 400 }, priceUsd: '0.000230', marketCap: 229_000 },
+      ),
+    });
+    expect(row.rugged).toBeFalsy();
+    expect(row.lastPriceUsd).toBe(0.000231);
+  });
+});

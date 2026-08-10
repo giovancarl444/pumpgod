@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
 import { peakSince } from '../pipeline/history';
-import type { DexPair } from '../pipeline/dexscreener';
+import { aggregate, type DexPair, type TokenView } from '../pipeline/dexscreener';
+import { chainFromSlug } from '../parse/chains';
 import type { Chain, RiskLevel, Signal } from '../types';
 import { log } from '../log';
 
@@ -333,7 +334,8 @@ export class Tracker {
   private async settle(call: TrackedCall): Promise<void> {
     if (!call.poolAddress || !call.entryPriceUsd) return;
 
-    const peak = await peakSince(call.chain, call.poolAddress, call.calledAt);
+    // Named, or a pool ordered the other way returns the peak of the coin we did not call.
+    const peak = await peakSince(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
     if (!peak) return;
 
     call.athFromChart = true;
@@ -421,18 +423,33 @@ export class Tracker {
         if (!res.ok) continue;
 
         const body = (await res.json()) as { pairs?: DexPair[] };
-        const best = new Map<string, DexPair>();
-        for (const pair of body.pairs ?? []) {
-          const addr = pair.baseToken?.address;
-          if (!addr) continue;
-          const k = addr.toLowerCase();
-          const current = best.get(k);
-          if (!current || (pair.liquidity?.usd ?? 0) > (current.liquidity?.usd ?? 0)) best.set(k, pair);
-        }
+        const pairs = body.pairs ?? [];
 
         for (const group of batch) {
-          const pair = best.get(group[0]!.address.toLowerCase());
-          if (pair) for (const call of group) this.apply(call, pair);
+          const call = group[0]!;
+          /**
+           * The same pool the card was built from, not a second opinion about it.
+           *
+           * This used to take whichever pool advertised the deepest liquidity, which is the
+           * exact fiction `mainPool` was written to reject — and it survived here for as long
+           * as it did because the two paths look unrelated: one publishes, one re-prices.
+           *
+           * PARKIFY caught it. A Meteora pool claiming $1.07bn of depth and a $1.43bn market
+           * cap, on a coin genuinely worth $229k, off one transaction in a day. The entry came
+           * off the chart and was right; every price after it came from the fiction pool. Five
+           * different channels had called that coin, so five of them were about to be credited
+           * with a **6,190x** — and a peak is the number the whole scorecard ranks on.
+           *
+           * Scoped to the chain the call was made on, rather than letting the busiest pool
+           * decide: an address can be a different coin elsewhere, and mid-run the namesake can
+           * out-trade the real one. `chainFromSlug` because our chain names are not
+           * DexScreener's and comparing the raw strings quietly matches nothing.
+           */
+          const view = aggregate(
+            pairs.filter((p) => !p.chainId || chainFromSlug(p.chainId) === call.chain),
+            call.address,
+          );
+          if (view) for (const c of group) this.apply(c, view);
         }
       } catch (err) {
         log.debug(`tracker poll failed: ${(err as Error).message}`);
@@ -442,18 +459,20 @@ export class Tracker {
     this.persist();
   }
 
-  private apply(call: TrackedCall, pair: DexPair): void {
+  private apply(call: TrackedCall, view: TokenView): void {
     // The pool as it was at call time, not whichever is deepest by the end. Liquidity can
     // migrate mid-run, and only the original is guaranteed to hold candles for the whole
     // window we need to read back.
-    call.poolAddress ??= pair.pairAddress;
+    call.poolAddress ??= view.best.pairAddress;
 
     applyQuote(
       call,
       {
-        priceUsd: pair.priceUsd ? Number(pair.priceUsd) : undefined,
-        mcUsd: pair.marketCap ?? pair.fdv,
-        liquidityUsd: pair.liquidity?.usd,
+        priceUsd: view.stats.priceUsd,
+        mcUsd: view.stats.marketCapUsd,
+        // Summed across the coin's real pools, as the card does. A rug is called on depth, and
+        // reading one pool of several would call it on a coin whose liquidity merely moved.
+        liquidityUsd: view.stats.liquidityUsd,
       },
       Date.now(),
     );
