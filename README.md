@@ -105,6 +105,30 @@ call, so they are proven up front instead:
 
 It exits non-zero on anything blocking, so a supervisor can gate the process on it.
 
+## Proving the engine, not just the wiring
+
+`doctor` proves the setup. `npm run drill -- --into <chat>` proves the engine. It posts a
+synthetic call into a chat you have configured as a source and then gets out of the way: the
+message comes back over the real socket, the real parser reads it, the real screen judges it,
+the real dedupe admits it and the real publish path sends it. Nothing in the drill
+reimplements any of that, which is the point — a drill carrying its own copy of the pipeline
+would pass while the engine was broken.
+
+It refuses to run unless `--into` names an **enabled source**, because posting into a chat
+ingest is not watching would look like a clean pass and prove nothing at all. By default it
+publishes to the war room; `--publish` sends the call to the real channel instead. Both
+messages are deleted when it finishes.
+
+The number it produces that nothing else can is **how long Telegram actually takes to hand you
+a message somebody just posted**. `bench` measures the parser and the send leg, but both of
+those start after we already have the message.
+
+It earned its place on the first run. Every drill uses a freshly generated mint, and base58
+can spell `lp`, `ca` and `age` — so the parser's short labels, which had no word boundaries,
+were matching *inside* addresses. A mint containing `Lp` fabricated a pool address that was a
+suffix of itself, and the Chart button pointed at it. A fixed test corpus was never going to
+find that.
+
 `LIVE=false` is the default. Calls are parsed, staged and logged but never published, so
 you can watch it work for a day before it can embarrass you. Flip to `LIVE=true` when the
 hit rate looks right.
@@ -171,6 +195,7 @@ double-post, it is recorded as a confirmation and shown as `2× confirmed`.
 
 ```bash
 npm run doctor           # prove the setup before a call depends on it
+npm run drill -- --into <chat>   # prove the engine relays a real call, end to end
 npm run dev              # run it
 npm run call -- <addr>   # preview a call you'd make yourself (posts nothing)
 npm run bench            # parser latency
@@ -249,5 +274,5 @@ src/
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
   track/      outcome tracking — entry, peak, milestones, rugs
-scripts/      login, doctor, dialogs, call, bench, replay, scorecard
+scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard
 ```

@@ -108,4 +108,34 @@ describe('parseCall — real message shapes', () => {
     expect(call!.token.address).toBe('5TokEnTokEnTokEnTokEnTokEnTokEnTokEnTokEnTok');
     expect(call!.token.origin).toBe('labelled');
   });
+
+  // Found by `npm run drill`, which posts a call with a random mint every run. Base58 can
+  // spell "lp", "ca" and "age", so every short label had to match on a word boundary — the
+  // suffix of a mint was being read as a pool address, and the Chart link followed it.
+  it('does not read a label out of the middle of an address', () => {
+    const call = parseCall('CA: F1Lp7ofUfn6FJaqBzi8eVd5sF1KCRz8rAtojtZnM7Ab\nMarket Cap: $84.20K');
+    expect(call!.token.address).toBe('F1Lp7ofUfn6FJaqBzi8eVd5sF1KCRz8rAtojtZnM7Ab');
+    expect(call!.token.confidence).toBe(1);
+    expect(call!.pairAddress).toBeUndefined();
+    expect(call!.candidates).toHaveLength(1);
+    expect(call!.stats.marketCapUsd).toBe(84_200);
+  });
+
+  it('does not read a token age out of the middle of an address', () => {
+    const call = parseCall('CA: C6NEGP7TumUTm7kU2X5dvA4age8Yc2fjZCpjrJpX7Ab\nToken Age: 3h');
+    expect(call!.stats.ageText).toBe('3h');
+  });
+
+  it('still reads the labels when they are real', () => {
+    const text = [
+      'CA: 5TokEnTokEnTokEnTokEnTokEnTokEnTokEnTokEnTok',
+      'LP: 9pooPpooPpooPpooPpooPpooPpooPpooPpooPpooPpoo',
+      'Price: $0.00042 · Token Age: 2h 30m',
+    ].join('\n');
+    const call = parseCall(text);
+    expect(call!.token.address).toBe('5TokEnTokEnTokEnTokEnTokEnTokEnTokEnTokEnTok');
+    expect(call!.pairAddress).toBe('9pooPpooPpooPpooPpooPpooPpooPpooPpooPpooPpoo');
+    expect(call!.stats.priceUsd).toBe(0.00042);
+    expect(call!.stats.ageText).toBe('2h 30m');
+  });
 });

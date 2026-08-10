@@ -41,10 +41,13 @@ export function extractStats(text: string): Stats {
   const holders = afterLabel(text, /holders/) ?? afterLabel(text, /\bhodlers\b/);
   if (holders) stats.holders = parseMoney(holders);
 
-  const price = text.match(/price\s*[:\-–—>»]*\s*(\$?\s*[\d.,]+(?:e-?\d+)?)/i)?.[1];
+  // `\b` matters most on the short labels. "age" and "price" are spellable in base58, so
+  // without it they match *inside* a mint address and read the characters after them as a
+  // value — the longer labels above cannot, because base58 has no `l`.
+  const price = text.match(/\bprice\b\s*[:\-–—>»]*\s*(\$?\s*[\d.,]+(?:e-?\d+)?)/i)?.[1];
   if (price) stats.priceUsd = parseMoney(price);
 
-  const age = text.match(/(?:token\s*)?age\s*[:\-–—>»]*\s*([\d]+\s*[a-z]+(?:\s*[\d]+\s*[a-z]+)?)/i)?.[1];
+  const age = text.match(/\b(?:token\s*)?age\b\s*[:\-–—>»]*\s*([\d]+\s*[a-z]+(?:\s*[\d]+\s*[a-z]+)?)/i)?.[1];
   if (age) stats.ageText = age.trim();
 
   return stats;

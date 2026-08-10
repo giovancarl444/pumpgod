@@ -14,6 +14,7 @@
     "call": "tsx scripts/call.ts",
     "login": "tsx scripts/login.ts",
     "doctor": "tsx scripts/doctor.ts",
+    "drill": "tsx scripts/drill.ts",
     "dialogs": "tsx scripts/list-dialogs.ts",
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",

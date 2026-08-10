@@ -9,10 +9,16 @@ const TRON = /\bT[1-9A-HJ-NP-Za-km-z]{33}\b/g;
 const URL_RE = /https?:\/\/[^\s<>()\[\]"']+/g;
 
 /** Labels a call group puts in front of the token address. Ordered longest-first so
- *  "Contract Address" wins over "Address" and we never truncate the match. */
+ *  "Contract Address" wins over "Address" and we never truncate the match.
+ *
+ *  The `\b` on both ends is load-bearing. Without it the short forms match *inside* other
+ *  words — `ca` inside "Market Cap", `lp` inside a base58 mint — and the run of address
+ *  characters immediately after is read as a labelled address in its own right. That
+ *  fabricates a pool address which is a suffix of the real one, and the Chart link then
+ *  points at something that does not exist. */
 const TOKEN_LABEL =
-  /(?:contract\s*address|token\s*address|mint\s*address|contract|address|token|mint|coin|ca|c\.a)\s*[:\-–—>»]*\s*/gi;
-const PAIR_LABEL = /(?:pair\s*address|pair|pool|lp)\s*[:\-–—>»]*\s*/gi;
+  /\b(?:contract\s*address|token\s*address|mint\s*address|contract|address|token|mint|coin|ca|c\.a)\b\s*[:\-–—>»]*\s*/gi;
+const PAIR_LABEL = /\b(?:pair\s*address|pair|pool|lp)\b\s*[:\-–—>»]*\s*/gi;
 
 /**
  * A 32-44 char base58 run is a weak signal on its own — hashes and IDs match too.

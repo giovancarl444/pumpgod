@@ -17,6 +17,21 @@ import { log } from '../log';
 export const FIRE = new Set(['🚀', '🔥', '⚡', '👍', '✅', '💎']);
 export const SKIP = new Set(['👎', '❌', '🤡', '💩']);
 
+/**
+ * The per-source gates from `config/sources.json`. Module-level so `npm run drill` can ask
+ * whether its test call would survive them rather than keeping a copy that drifts.
+ */
+export function passesFilters(source: Source, call: ParsedCall): boolean {
+  if (source.chains?.length && !source.chains.includes(call.token.chain)) return false;
+
+  const mc = call.stats.marketCapUsd;
+  if (mc !== undefined) {
+    if (source.minMarketCapUsd !== undefined && mc < source.minMarketCapUsd) return false;
+    if (source.maxMarketCapUsd !== undefined && mc > source.maxMarketCapUsd) return false;
+  }
+  return true;
+}
+
 /** War-room cards expire so a stale reaction cannot fire a call from an hour ago. */
 const STAGE_TTL_MS = 30 * 60_000;
 
@@ -89,7 +104,7 @@ export class Router {
    */
   route(input: RouteInput): void {
     const { source, call } = input;
-    if (!this.passesFilters(source, call)) return;
+    if (!passesFilters(source, call)) return;
 
     const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, source.id);
 
@@ -168,17 +183,6 @@ export class Router {
       parsedAt: now,
       enriched: true,
     });
-  }
-
-  private passesFilters(source: Source, call: NonNullable<ReturnType<typeof parseCall>>): boolean {
-    if (source.chains?.length && !source.chains.includes(call.token.chain)) return false;
-
-    const mc = call.stats.marketCapUsd;
-    if (mc !== undefined) {
-      if (source.minMarketCapUsd !== undefined && mc < source.minMarketCapUsd) return false;
-      if (source.maxMarketCapUsd !== undefined && mc > source.maxMarketCapUsd) return false;
-    }
-    return true;
   }
 
   /** Publish to the public channel, then upgrade the message once enrichment lands. */
