@@ -50,6 +50,7 @@ export interface AppConfig {
   metricsIntervalMs: number;
   maxCallAgeSec: number;
   catchupIntervalMs: number;
+  trackIntervalMs: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -68,6 +69,7 @@ export function loadConfig(): AppConfig {
     metricsIntervalMs: num('METRICS_INTERVAL_SEC', 300) * 1000,
     maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
     catchupIntervalMs: num('CATCHUP_INTERVAL_SEC', 60) * 1000,
+    trackIntervalMs: num('TRACK_INTERVAL_SEC', 60) * 1000,
   };
 }
 

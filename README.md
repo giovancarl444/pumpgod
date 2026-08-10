@@ -100,12 +100,35 @@ npm run dev              # run it
 npm run bench            # parser latency
 npm run bench -- --network   # add send round-trip (posts probes to the war room)
 npm run replay           # re-run the journal through the current parser
-npm test                 # parser + message rendering
+npm run scorecard        # what each source's calls actually did
+npm test                 # parser + message rendering + outcome tracking
 ```
 
-Everything the bot sees is journalled to `data/journal-YYYY-MM-DD.jsonl`. That file is how
-you answer "which group is actually worth following" — and `replay` is how you check a
-parser change against real traffic instead of guesses.
+Everything the bot sees is journalled to `data/journal-YYYY-MM-DD.jsonl`, and `replay` is how
+you check a parser change against real traffic instead of guesses.
+
+## Which sources are worth following
+
+Every call is re-priced against DexScreener every `TRACK_INTERVAL_SEC` for 24 hours, and the
+entry, peak, time-to-2x/5x/10x and whether liquidity was pulled are written to
+`data/tracked.json`. Shadow calls are tracked too — finding out what a group *would* have made
+you, before trusting it, is the entire point of shadow mode.
+
+```
+  SOURCE            N     MED PEAK   2x      5x      10x     RUG     MED ENTRY   MED→2x
+  ─────────────────────────────────────────────────────────────────────────────────────
+  soaps             22    2.50x      59%     27%     14%     5%      $41K        2m
+  noisegroup        22    0.70x      5%      0%      0%      27%     $41K        15m
+  newgroup          1     3.00x      100%    0%      0%      0%      $129K       5m
+```
+
+Peak is a **median**, not a mean: one 200x drags a mean somewhere useless, and the question is
+what a typical call from this group does, not the best thing that ever happened. Sources under
+20 calls sort to the bottom however good they look, because people read the table top-down and
+three lucky calls is not evidence. `npm run scorecard -- --called` restricts it to calls
+actually published.
+
+That table is the promotion rule: `shadow` → `review` → `auto` on the numbers, not on vibes.
 
 ## Roadmap
 
@@ -117,8 +140,9 @@ feed, which puts us ahead of every group we currently follow rather than behind 
 The journal from phase 1 is what tells us which signals are worth acting on.
 
 **Phase 3 — distribution.** X and TikTok: auto-generated recap videos of calls that ran,
-rendered from the same journal. Remotion is a React renderer for video, which is why this is
-a TypeScript codebase.
+rendered straight from `data/tracked.json` — it already holds the entry, the peak and how long
+the run took, which is exactly what a recap needs. Remotion is a React renderer for video,
+which is why this is a TypeScript codebase.
 
 ## Layout
 
@@ -130,5 +154,6 @@ src/
   format/     message rendering
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
-scripts/      login, dialogs, bench, replay
+  track/      outcome tracking — entry, peak, milestones, rugs
+scripts/      login, dialogs, bench, replay, scorecard
 ```

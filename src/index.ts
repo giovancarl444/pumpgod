@@ -2,6 +2,7 @@ import { loadConfig, loadSources, normalisePeerId } from './config';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { attachIngest } from './telegram/ingest';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
+import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
@@ -55,7 +56,11 @@ async function main() {
 
   if (!watched.size) throw new Error('No sources could be resolved. Is this account a member of those groups?');
 
-  const router = new Router(client, config, channelPeer, warRoomPeer);
+  const tracker = new Tracker();
+  tracker.load();
+  tracker.start(config.trackIntervalMs);
+
+  const router = new Router(client, config, channelPeer, warRoomPeer, tracker);
   const catchup = new Catchup(client);
   catchup.load();
 
@@ -96,6 +101,7 @@ async function main() {
     log.info(formatSnapshot());
     // Persisting the cursors is what lets the next start recover the gap it left behind.
     catchup.persist();
+    tracker.stop();
     journal.close();
     await client.disconnect();
     process.exit(0);

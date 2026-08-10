@@ -9,6 +9,7 @@ import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
 import { record } from '../metrics/latency';
 import { journal } from '../store/journal';
+import { Tracker } from '../track/tracker';
 import { log } from '../log';
 
 const FIRE = new Set(['🚀', '🔥', '⚡', '👍', '✅', '💎']);
@@ -33,6 +34,7 @@ export class Router {
     private readonly config: AppConfig,
     private readonly channelPeer: Api.TypeInputPeer | undefined,
     private readonly warRoomPeer: Api.TypeInputPeer | undefined,
+    private readonly tracker?: Tracker,
   ) {
     this.dedupe = new Dedupe(config.dedupeTtlMs);
   }
@@ -82,6 +84,9 @@ export class Router {
     if (incoming.source.mode === 'shadow') {
       log.info(`👻 shadow ${label(signal)} from ${incoming.source.label}`);
       journal.write('shadow', this.record(signal));
+      // Tracked anyway — knowing what a source *would* have made us is the whole
+      // reason shadow mode exists.
+      this.tracker?.track(signal, 'shadow');
       return;
     }
 
@@ -112,6 +117,8 @@ export class Router {
     if (!this.config.live || !this.channelPeer) {
       log.info(`🔇 DRY RUN would call ${label(signal)} (LIVE=false)`);
       journal.write('dry-run', this.record(signal));
+      // Still tracked, so a dry run produces a real scorecard rather than nothing.
+      this.tracker?.track(signal, 'dry-run');
       return;
     }
 
@@ -133,6 +140,7 @@ export class Router {
         `🚀 CALLED ${label(signal)} · ${(sent.ackAt - signal.timings.recvAt).toFixed(1)}ms end-to-end`,
       );
       journal.write('called', this.record(signal));
+      this.tracker?.track(signal, 'called');
 
       if (this.config.enrichEnabled && sent.messageId) {
         void this.upgrade(signal, sent.messageId);
@@ -178,6 +186,7 @@ export class Router {
       record('detect-to-warroom', sent.ackAt - signal.timings.recvAt);
       log.info(`🔎 staged ${label(signal)} from ${signal.source.label}`);
       journal.write('staged', this.record(signal));
+      this.tracker?.track(signal, 'staged');
     } catch (err) {
       log.error('failed to stage call', (err as Error).message);
     }

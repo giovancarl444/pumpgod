@@ -51,6 +51,7 @@ function harness(overrides: Partial<AppConfig> = {}) {
     metricsIntervalMs: 60_000,
     maxCallAgeSec: 90,
     catchupIntervalMs: 60_000,
+    trackIntervalMs: 60_000,
     ...overrides,
   };
 
