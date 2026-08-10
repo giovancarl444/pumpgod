@@ -77,6 +77,23 @@ describe('adopting the chart over a recorded number', () => {
     expect(row.athFromChart).toBe(true);
   });
 
+  /**
+   * Our own entry went out on a card people read and acted on. Aligning the stored number to the
+   * chart afterwards would leave our history disagreeing with our published history, and a group
+   * that edits its own entry prices later is the exact thing this record exists not to be. The
+   * peak is different — nothing was published about it — so it is still corrected.
+   */
+  it('will not revise the entry of a call we published', () => {
+    const row = call({ outcome: 'called', entryPriceUsd: 0.0000472, entryMcUsd: 47_200 });
+    apply({ call: row, what: 'entry', was: row.entryPriceUsd, now: 0.0000473 });
+
+    expect(row.entryPriceUsd).toBe(0.0000472);
+    expect(row.entryMcUsd).toBe(47_200);
+
+    apply({ call: row, what: 'peak', was: undefined, now: 0.0000946, at: 1_700_000_100_000 });
+    expect(row.athPriceUsd).toBe(0.0000946);
+  });
+
   it('records a peak on a row that never had one', () => {
     const row = call();
     apply({ call: row, what: 'peak', was: undefined, now: 0.002, at: 1_700_000_100_000 });

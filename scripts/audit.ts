@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ROOT } from '../src/config';
 import { peakSince, priceAt } from '../src/pipeline/history';
+import { isPublished } from '../src/track/stats';
 import { CONTRADICTED, type TrackedCall } from '../src/track/tracker';
 
 /**
@@ -132,6 +133,19 @@ export function apply(finding: Finding): void {
   const { call, now } = finding;
 
   if (finding.what === 'entry') {
+    /**
+     * A published entry is a claim, not a record, and it is not this script's to revise.
+     *
+     * For a scraped call the chart is simply better evidence than the price we happened to see,
+     * so adopting it is a repair. For one of ours the number went out on a card that people
+     * read and acted on; quietly aligning the database to the chart afterwards would leave our
+     * stored history disagreeing with our own published history, and "we edited the entry
+     * later" is indistinguishable from the thing we exist not to be. If a published entry is
+     * genuinely wrong, that is a person deciding what to say about it, not a script deciding
+     * for them — so it is still reported, and still not touched.
+     */
+    if (isPublished(call)) return;
+
     const old = call.entryPriceUsd;
     if (call.entryMcUsd && old) call.entryMcUsd = (call.entryMcUsd * now) / old;
     call.entryPriceUsd = now;
