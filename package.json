@@ -20,7 +20,8 @@
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",
     "recap": "tsx scripts/recap.ts",
-    "scorecard": "tsx scripts/scorecard.ts"
+    "scorecard": "tsx scripts/scorecard.ts",
+    "scoreboard": "tsx scripts/scoreboard.ts"
   },
   "engines": {
     "node": ">=18.14.0"

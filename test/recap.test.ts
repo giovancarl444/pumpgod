@@ -3,7 +3,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TrackedCall, Outcome } from '../src/track/tracker';
-import { dailyRecap, milestonePost, reached, summarise, duration } from '../src/social/recap';
+import { dailyRecap, milestonePost, reached } from '../src/social/recap';
+import { scoreboard } from '../src/track/stats';
+import { duration } from '../src/format/call';
 import { Poster } from '../src/social/poster';
 import { tweetLength, TWEET_LIMIT, signatureBase, sign } from '../src/social/x';
 import { createHmac } from 'node:crypto';
@@ -67,7 +69,7 @@ describe('only calls we actually made', () => {
   it('leaves them out of the daily scoreboard too', () => {
     const day = new Date();
     const mixed = [call(), call({ outcome: 'shadow', athPriceUsd: 0.01 })];
-    expect(summarise(mixed).called).toBe(1);
+    expect(scoreboard(mixed).called).toBe(1);
     expect(dailyRecap(mixed, day, OPTS)).toContain('1 call');
   });
 });
@@ -196,7 +198,7 @@ describe('dailyRecap', () => {
   // number nobody can account for is exactly what a sceptic goes looking for.
   it('names the calls it has no price for instead of burying them in the misses', () => {
     const calls = [call(), call({ address: 'b', athPriceUsd: undefined, entryPriceUsd: undefined })];
-    expect(summarise(calls).unpriced).toBe(1);
+    expect(scoreboard(calls).unpriced).toBe(1);
 
     const text = dailyRecap(calls, new Date('2026-08-09'), OPTS)!;
     expect(text).toContain('2 calls');

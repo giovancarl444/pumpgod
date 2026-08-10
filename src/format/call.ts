@@ -23,6 +23,15 @@ export function money(n: number | undefined): string | undefined {
   return `$${trim(n)}`;
 }
 
+export function duration(seconds: number): string {
+  if (seconds < 90) return `${Math.max(1, Math.round(seconds))}s`;
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
 function trim(n: number): string {
   const fixed = n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2);
   return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;

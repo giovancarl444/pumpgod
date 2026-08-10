@@ -1,7 +1,7 @@
 import { loadSocial } from '../src/config';
 import { Poster } from '../src/social/poster';
 import { Tracker } from '../src/track/tracker';
-import { isPublished, peakMultiple } from '../src/social/recap';
+import { isPublished, peakMultiple } from '../src/track/stats';
 import { tweetLength, TWEET_LIMIT, loadCredentials } from '../src/social/x';
 
 /**

@@ -1,10 +1,10 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
-import { money } from '../format/call';
+import { duration, money } from '../format/call';
 import type { TrackedCall } from '../track/tracker';
 import type { Peer, Transport } from '../telegram/transport';
-import { bestDue, duration, type Milestone } from './recap';
+import { bestDue, type Milestone } from './recap';
 import { log } from '../log';
 
 const STORE = resolve(ROOT, 'data/followed.json');

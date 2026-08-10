@@ -1,4 +1,6 @@
 import { Tracker, type TrackedCall } from '../src/track/tracker';
+import { median, peakMultiple } from '../src/track/stats';
+import { duration, money } from '../src/format/call';
 
 /**
  * Ranks sources on what their calls actually did, not on how loud they are.
@@ -23,20 +25,8 @@ interface Row {
   medianTimeTo2x?: number;
 }
 
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-}
-
-function peak(call: TrackedCall): number | undefined {
-  if (!call.entryPriceUsd || !call.athPriceUsd) return undefined;
-  return call.athPriceUsd / call.entryPriceUsd;
-}
-
 function summarise(source: string, calls: TrackedCall[]): Row {
-  const peaks = calls.map(peak).filter((v): v is number => v !== undefined);
+  const peaks = calls.map(peakMultiple).filter((v): v is number => v !== undefined);
   const times = calls.map((c) => c.timeTo2xSec).filter((v): v is number => v !== undefined);
   const pct = (n: number) => (calls.length ? (n / calls.length) * 100 : 0);
 
@@ -53,18 +43,9 @@ function summarise(source: string, calls: TrackedCall[]): Row {
   };
 }
 
-function money(n: number): string {
-  if (!n) return '—';
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
-}
-
-function duration(sec?: number): string {
-  if (sec === undefined) return '—';
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  return `${(sec / 3600).toFixed(1)}h`;
+/** A column with nothing in it says so, rather than printing a confident zero. */
+function or(value: string | undefined): string {
+  return value ?? '—';
 }
 
 function main() {
@@ -120,8 +101,8 @@ function main() {
         `${r.hit5x.toFixed(0)}%`.padEnd(8) +
         `${r.hit10x.toFixed(0)}%`.padEnd(8) +
         `${r.rugged.toFixed(0)}%`.padEnd(8) +
-        money(r.medianEntryMc).padEnd(12) +
-        duration(r.medianTimeTo2x),
+        or(r.medianEntryMc ? money(r.medianEntryMc) : undefined).padEnd(12) +
+        or(r.medianTimeTo2x === undefined ? undefined : duration(r.medianTimeTo2x)),
     );
   }
 

@@ -1,5 +1,6 @@
 import type { TrackedCall } from '../track/tracker';
-import { money } from '../format/call';
+import { isPublished, peakMultiple, scoreboard, TIME_TO } from '../track/stats';
+import { duration, money } from '../format/call';
 
 /** Multiples worth telling anyone about. A 2x is a good afternoon, not a headline. */
 export const MILESTONES = [2, 5, 10, 25, 50, 100] as const;
@@ -11,27 +12,6 @@ export interface RecapOptions {
   /** Lowest multiple that earns a post. Below this, posting trains people to scroll past. */
   minMultiple: number;
 }
-
-/**
- * The one rule this module exists to enforce: we only ever claim calls we actually
- * published. Shadow and dry-run calls are tracked precisely so we can evaluate sources
- * privately — posting one as ours would be a lie, and the public channel is a timestamped
- * record that anybody can check it against.
- */
-export function isPublished(call: TrackedCall): boolean {
-  return call.outcome === 'called';
-}
-
-export function peakMultiple(call: TrackedCall): number | undefined {
-  if (!call.entryPriceUsd || !call.athPriceUsd) return undefined;
-  return call.athPriceUsd / call.entryPriceUsd;
-}
-
-const TIME_TO: Record<number, keyof TrackedCall> = {
-  2: 'timeTo2xSec',
-  5: 'timeTo5xSec',
-  10: 'timeTo10xSec',
-};
 
 /** Milestones this call has reached, largest first. */
 export function reached(call: TrackedCall, minMultiple: number): Milestone[] {
@@ -111,64 +91,12 @@ function elapsedTo(call: TrackedCall, milestone: Milestone): number | undefined 
   return typeof value === 'number' ? value : undefined;
 }
 
-export interface DayStats {
-  called: number;
-  hit2x: number;
-  hit5x: number;
-  hit10x: number;
-  /**
-   * Calls we never got a price for. They count in `called` and can never count as a hit, so
-   * they read as losses unless they are named — which understates us, and quietly, which is
-   * the worse half. Anyone checking the arithmetic should be able to see where the gap went.
-   */
-  unpriced: number;
-  /** `run` is the biggest milestone we actually timed, which is rarely the peak itself —
-   *  so it has to carry its own multiple rather than borrow the peak's. */
-  best?: { ticker: string; multiple: number; run?: { milestone: number; seconds: number } };
-}
-
-/** The largest milestone with a recorded time. Times exist only for the tracked ones. */
-function timedRun(call: TrackedCall): { milestone: number; seconds: number } | undefined {
-  let found: { milestone: number; seconds: number } | undefined;
-  for (const milestone of [2, 5, 10]) {
-    const field = TIME_TO[milestone];
-    const seconds = field ? call[field] : undefined;
-    if (typeof seconds === 'number') found = { milestone, seconds };
-  }
-  return found;
-}
-
-export function summarise(calls: TrackedCall[]): DayStats {
-  const published = calls.filter(isPublished);
-  const stats: DayStats = { called: published.length, hit2x: 0, hit5x: 0, hit10x: 0, unpriced: 0 };
-
-  for (const call of published) {
-    const peak = peakMultiple(call);
-    if (peak === undefined) {
-      stats.unpriced++;
-      continue;
-    }
-    if (peak >= 2) stats.hit2x++;
-    if (peak >= 5) stats.hit5x++;
-    if (peak >= 10) stats.hit10x++;
-
-    if (!stats.best || peak > stats.best.multiple) {
-      stats.best = {
-        ticker: call.ticker ? `$${call.ticker}` : (call.name ?? '?'),
-        multiple: peak,
-        run: timedRun(call),
-      };
-    }
-  }
-  return stats;
-}
-
 /**
  * A day's work in one post. This is the honest version of the format every call group uses:
  * the denominator is there, so a good day reads as a good day rather than a selected one.
  */
 export function dailyRecap(calls: TrackedCall[], day: Date, opts: RecapOptions): string | undefined {
-  const stats = summarise(calls);
+  const stats = scoreboard(calls);
   if (!stats.called) return undefined;
 
   const date = day.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -196,13 +124,4 @@ export function dailyRecap(calls: TrackedCall[], day: Date, opts: RecapOptions):
 
   if (opts.channelUrl) lines.push('', opts.channelUrl);
   return lines.join('\n');
-}
-
-export function duration(seconds: number): string {
-  if (seconds < 90) return `${Math.max(1, Math.round(seconds))}s`;
-  const mins = Math.round(seconds / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const rest = mins % 60;
-  return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
