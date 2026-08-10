@@ -22,6 +22,7 @@ import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
 import { createCommandHandler } from './pipeline/command';
+import { createCallbackHandler } from './pipeline/callback';
 import { createDirectHandler } from './pipeline/direct';
 import { createMemberHandlers } from './pipeline/member';
 import { createPromoHandlers } from './pipeline/promo';
@@ -273,6 +274,15 @@ async function runBot(config: AppConfig) {
     channelUrl: social.channelUrl,
   });
 
+  // The same two verbs, arriving by tap instead of by typing. A press carries no authority
+  // beyond what the presser could have typed anyway, which is why it goes here and not near
+  // `handleCommand`.
+  const handleCallback = createCallbackHandler({
+    api,
+    promo,
+    member: competition.enabled ? member : undefined,
+  });
+
   const ingest = startBotIngest(
     api,
     { channelId: channelPeer.id, warRoomId: warRoomPeer?.id },
@@ -282,6 +292,7 @@ async function runBot(config: AppConfig) {
       onDirect: (dm) => void handleDirect(dm),
       onPreCheckout: (q) => void promo.onPreCheckout(q),
       onPaid: (p) => void promo.onPaid(p),
+      onCallback: (p) => void handleCallback(p),
     },
   );
 

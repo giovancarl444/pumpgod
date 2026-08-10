@@ -21,6 +21,13 @@ interface BotUpdate {
     total_amount: number;
     currency: string;
   };
+  callback_query?: {
+    id: string;
+    from: BotUser;
+    /** Absent for a message too old for Telegram to still have. */
+    message?: BotMessage;
+    data?: string;
+  };
 }
 
 interface BotUser {
@@ -79,6 +86,28 @@ export interface PreCheckout {
   currency: string;
 }
 
+/**
+ * A button press.
+ *
+ * **Has to be answered, and inside 10 seconds**, or the client spins on the button until it
+ * times out — which reads as a broken bot rather than a slow one. `data` is whatever we put in
+ * `callback_data` when the button was drawn, and it is capped at 64 bytes on the way out.
+ *
+ * It is not authenticated by anything except the button existing. Anyone who can see a message
+ * can press its buttons, and a `callback_data` string can be replayed, so a press may only ever
+ * do something the presser could already have done by typing.
+ */
+export interface CallbackPress {
+  /** Answers the spinner. Required, whatever else happens. */
+  id: string;
+  chatId?: string;
+  messageId?: number;
+  fromId: string;
+  handle?: string;
+  data: string;
+  recvAt: number;
+}
+
 /** The money has arrived. From here it is deliver or refund; there is no third option. */
 export interface PaidOrder {
   chatId: string;
@@ -103,6 +132,7 @@ export interface BotIngestHandlers {
   onDirect?(dm: DirectMessage): void;
   onPreCheckout?(query: PreCheckout): void;
   onPaid?(order: PaidOrder): void;
+  onCallback?(press: CallbackPress): void;
 }
 
 function handleOf(user: BotUser | undefined): string | undefined {
@@ -193,6 +223,21 @@ export function startBotIngest(
         payload: checkout.invoice_payload,
         amount: checkout.total_amount,
         currency: checkout.currency,
+      });
+      return;
+    }
+
+    // Same reason, same deadline: an unanswered button spins on the presser's screen.
+    const press = update.callback_query;
+    if (press) {
+      handlers.onCallback?.({
+        id: press.id,
+        chatId: press.message ? String(press.message.chat.id) : undefined,
+        messageId: press.message?.message_id,
+        fromId: String(press.from.id),
+        handle: handleOf(press.from),
+        data: press.data ?? '',
+        recvAt,
       });
       return;
     }
@@ -306,7 +351,13 @@ export function startBotIngest(
             // reaction the war room's 🚀 approval rides on and the pre-checkout query, which
             // has to be answered for a payment to complete at all. A receipt for a completed
             // payment arrives as an ordinary `message`, so it needs no entry of its own.
-            allowed_updates: ['message', 'channel_post', 'message_reaction', 'pre_checkout_query'],
+            allowed_updates: [
+              'message',
+              'channel_post',
+              'message_reaction',
+              'pre_checkout_query',
+              'callback_query',
+            ],
           },
           (POLL_SECONDS + 5) * 1000,
         );

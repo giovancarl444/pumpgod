@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { CompetitionConfig } from '../src/config';
+import { createCallbackHandler, pressData, DATA_LIMIT } from '../src/pipeline/callback';
 import { createDirectHandler } from '../src/pipeline/direct';
 import type { MemberHandlers, Standing } from '../src/pipeline/member';
 import type { PromoHandlers } from '../src/pipeline/promo';
 import { parseVerb } from '../src/parse/verb';
 import { BotApi } from '../src/telegram/botapi';
-import type { DirectMessage } from '../src/telegram/botingest';
+import type { CallbackPress, DirectMessage } from '../src/telegram/botingest';
 
 /**
  * The DM surface, which is the only place a stranger can type at us.
@@ -17,6 +18,8 @@ import type { DirectMessage } from '../src/telegram/botingest';
  */
 
 let sent: Array<Record<string, unknown>>;
+/** The Bot API method behind each entry in `sent`, read off the URL it went to. */
+let calledMethods: string[];
 
 const COMP: CompetitionConfig = { enabled: true, picksPerDay: 1, minSample: 5, size: 10 };
 
@@ -82,10 +85,12 @@ function replies(): string[] {
 
 beforeEach(() => {
   sent = [];
+  calledMethods = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (_url: string, init?: { body?: string }) => {
+    vi.fn(async (url: string, init?: { body?: string }) => {
       sent.push(JSON.parse(init?.body ?? '{}') as Record<string, unknown>);
+      calledMethods.push(String(url).split('/').pop() ?? '');
       return { json: async () => ({ ok: true, result: { message_id: 1 } }) } as Response;
     }),
   );
@@ -188,6 +193,138 @@ describe('dispatch', () => {
     await h.handle(dm('/start'));
 
     expect(sent[0]!.link_preview_options).toEqual({ is_disabled: true });
+  });
+});
+
+/**
+ * The commonest thing anybody will send this bot, because the button on the pinned leaderboard
+ * drops them into an empty DM and pasting the address is the obvious next move.
+ */
+describe('a pasted address', () => {
+  const COIN = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+
+  function buttons(): Array<{ text: string; data?: string }> {
+    const markup = sent[0]!.reply_markup as { inline_keyboard?: Array<Array<{ text: string; data?: string }>> };
+    return (markup?.inline_keyboard ?? []).flat();
+  }
+
+  /**
+   * Not guessed at. A pick costs a member their one entry for the day and a promotion costs
+   * real money, so an address that could mean either is asked about — and neither the tracker
+   * nor an invoice is touched until the answer comes back.
+   */
+  it('is never acted on without being asked about', async () => {
+    const h = handler();
+    await h.handle(dm(COIN));
+
+    expect(h.submitted).toHaveLength(0);
+    expect(h.promoted).toHaveLength(0);
+    expect(replies()[0]).toContain('Nothing happens until you choose');
+  });
+
+  it('comes back with the address already loaded, so answering is one tap', async () => {
+    const h = handler();
+    await h.handle(dm(COIN));
+
+    expect(buttons().map((b) => b.data)).toEqual([`submit:${COIN}`, `promote:${COIN}`]);
+  });
+
+  it('offers only what is switched on', async () => {
+    const h = handler({ promo: undefined });
+    await h.handle(dm(COIN));
+
+    expect(buttons().map((b) => b.data)).toEqual([`submit:${COIN}`]);
+  });
+
+  it('falls back to the help text when there is nothing to offer', async () => {
+    const h = handler({ promo: undefined, member: undefined, competition: { enabled: false } });
+    await h.handle(dm(COIN));
+
+    expect(buttons()).toHaveLength(0);
+    expect(replies()[0]).toContain('pumpgod');
+  });
+
+  // Telegram caps callback_data at 64 bytes and a Solana address is 44 of them, so the fit is
+  // real but not generous — a button drawn with an over-long payload is silently rejected by
+  // Telegram for the whole message, taking the working buttons with it.
+  it('fits inside what a button can carry', () => {
+    expect(Buffer.byteLength(`promote:${COIN}`)).toBeLessThanOrEqual(DATA_LIMIT);
+    expect(pressData('submit', 'x'.repeat(64))).toBeUndefined();
+  });
+});
+
+describe('pressing a button', () => {
+  const COIN = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+
+  function presser(over: { promo?: PromoHandlers; member?: MemberHandlers } = {}) {
+    const base = stubs();
+    const handle = createCallbackHandler({
+      api: new BotApi('123:SECRET'),
+      promo: 'promo' in over ? over.promo : base.promo,
+      member: 'member' in over ? over.member : base.member,
+    });
+    return { ...base, handle };
+  }
+
+  function press(data: string, over: Partial<CallbackPress> = {}): CallbackPress {
+    return { id: 'q1', chatId: '77', messageId: 5, fromId: '77', handle: '@alice', data, recvAt: 0, ...over };
+  }
+
+  /** Every method the bot called, in order — the answer has to be in there first. */
+  const methods = (): string[] => calledMethods;
+
+  /**
+   * The one deadline in the file. An unanswered press spins on the presser's phone until
+   * Telegram gives up on it, which reads as a bot that is broken rather than one that is busy —
+   * so it is answered before the work, not after it.
+   */
+  it('stops the spinner before doing the work', async () => {
+    const h = presser();
+    await h.handle(press(`submit:${COIN}`));
+
+    expect(methods()[0]).toBe('answerCallbackQuery');
+    expect(h.submitted).toEqual([COIN]);
+  });
+
+  it('hands the address over exactly as the button carried it', async () => {
+    const h = presser();
+    await h.handle(press(`promote:${COIN}`));
+
+    expect(h.promoted.map((p) => p.argument)).toEqual([COIN]);
+  });
+
+  /**
+   * A press is not authenticated by anything except the button existing, and the data can be
+   * replayed. It may only ever do what the presser could already have done by typing, which is
+   * why there is no route from here to `/signal` any more than there is from a DM.
+   */
+  it('has no route to anything a DM could not reach', async () => {
+    const h = presser();
+    for (const data of ['signal:' + COIN, 'call:' + COIN, 'publish', '']) {
+      await h.handle(press(data));
+    }
+
+    expect(h.submitted).toHaveLength(0);
+    expect(h.promoted).toHaveLength(0);
+    expect(methods().every((m) => m === 'answerCallbackQuery')).toBe(true);
+  });
+
+  it('says so rather than going quiet when the surface is off', async () => {
+    const h = presser({ member: undefined });
+    await h.handle(press(`submit:${COIN}`));
+
+    expect(h.submitted).toHaveLength(0);
+    expect(String(sent[0]!.text)).toContain('not running');
+  });
+
+  // Telegram drops the message off a press once it is old enough, so there is nowhere to put a
+  // reply — and every answer here is a message, because a toast cannot hold a market cap.
+  it('refuses a press it has nowhere to answer', async () => {
+    const h = presser();
+    await h.handle(press(`submit:${COIN}`, { chatId: undefined }));
+
+    expect(h.submitted).toHaveLength(0);
+    expect(String(sent[0]!.text)).toContain('too old');
   });
 });
 

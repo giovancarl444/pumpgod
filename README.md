@@ -467,6 +467,11 @@ signal path at all: `/signal` typed into a DM has no route to the channel by con
 than by a check. Only a `@username` is ever stored — Telegram's `first_name` is free text the
 member chooses, and the leaderboard is rendered as HTML in a public channel.
 
+Pasting a bare contract address into the DM works too, and is what most people will do after
+tapping the button. It is never acted on unasked — a pick costs a member their entry for the day
+and a promotion costs money — so it comes back as a choice, with the address already loaded into
+the buttons so answering is one tap rather than another paste.
+
 ## Making money from it
 
 Trading terminals attribute a referral when someone **signs up** through your link, then pay a
@@ -538,10 +543,10 @@ people who never call anything a reason to stay. A member's pick can never reach
 `isPublished()` is the single gate, and the outcome ranks above `called` so nothing can upgrade
 one into a call of ours.
 
-**Then — the rest of the interactive surface.** `callback_query`, which nothing here answers
-yet: buttons currently only carry links. It was planned as the prerequisite for the competition
-and turned out not to be one — the real blocker was DMs being dropped on ingest, and that is
-open. So this is now wanted on its own merits: one tap to enter a pick beats typing an address.
+**Done — buttons that do something.** `callback_query` is answered, so a contract address pasted
+into a DM comes back as a choice — enter it in the competition, or buy a slot — with the address
+already loaded into the buttons. A press can only ever do what the presser could have done by
+typing, which is why it is handled next to the DM router and nowhere near the signal path.
 
 **Then — distribution.** X media cards, then TikTok recap videos rendered straight from
 `data/tracked.json`, which already holds the entry, the peak and how long the run took.
@@ -556,8 +561,8 @@ a machine for amplifying proof, so it comes after there is proof.
 src/
   parse/      address extraction, chain inference, stat fields, DM verbs — pure and synchronous
   telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler, Stars
-  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls, DMs, paid slots,
-              member picks
+  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls, DMs, button
+              presses, paid slots, member picks
   format/     message rendering
   metrics/    latency histograms
   store/      journal (buffered, off the hot path); promo orders and members (on disk)

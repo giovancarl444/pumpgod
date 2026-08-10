@@ -1,9 +1,13 @@
 import type { CompetitionConfig } from '../config';
+import { escapeHtml } from '../format/call';
 import { renderLeaderboard, renderStanding } from '../format/leaderboard';
 import { log } from '../log';
+import { classifyAddress } from '../parse/addresses';
 import { parseVerb } from '../parse/verb';
 import type { BotApi } from '../telegram/botapi';
 import type { DirectMessage } from '../telegram/botingest';
+import type { Button } from '../telegram/transport';
+import { pressData } from './callback';
 import type { MemberHandlers } from './member';
 import type { PromoHandlers } from './promo';
 
@@ -31,7 +35,7 @@ export interface DirectDeps {
 export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Promise<void> {
   const { api, promo, member, competition, channelUrl } = deps;
 
-  const reply = async (chatId: string, text: string) => {
+  const reply = async (chatId: string, text: string, keyboard?: Button[][]) => {
     await api
       .call('sendMessage', {
         chat_id: chatId,
@@ -40,8 +44,47 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
         // A leaderboard is full of nothing but coin tickers; letting Telegram unfurl one of
         // them would put an unvetted preview card under our own table.
         link_preview_options: { is_disabled: true },
+        reply_markup: keyboard?.length ? { inline_keyboard: keyboard } : undefined,
       })
       .catch((err: Error) => log.debug(`could not reply in a DM: ${err.message}`));
+  };
+
+  /**
+   * A contract address on its own, with no verb in front of it.
+   *
+   * The commonest thing anyone will ever send this bot, because the pinned leaderboard's button
+   * drops them into an empty DM and pasting the address is the obvious next move. Answering it
+   * with the general help text would be technically correct and would lose most of them.
+   *
+   * It is not guessed at. `/submit` costs a member their one pick for the day and `/promote`
+   * costs real money, so an address that could mean either is asked about rather than acted on —
+   * but asked about with the address already loaded into the buttons, so saying which costs one
+   * tap and not another paste.
+   */
+  const offer = async (dm: DirectMessage, address: string): Promise<void> => {
+    const buttons: Button[] = [];
+    if (member) {
+      const data = pressData('submit', address);
+      if (data) buttons.push({ text: '🏆 Enter it in the competition', data });
+    }
+    if (promo?.config.enabled) {
+      const data = pressData('promote', address);
+      if (data) buttons.push({ text: `📣 Promote it · ${promo.config.priceStars} ⭐`, data });
+    }
+
+    if (!buttons.length) return reply(dm.chatId, help());
+
+    return reply(
+      dm.chatId,
+      [
+        `<code>${escapeHtml(short(address))}</code>`,
+        '',
+        buttons.length === 1
+          ? 'Tap below to enter it. Nothing is entered until you do.'
+          : 'What would you like to do with it? Nothing happens until you choose.',
+      ].join('\n'),
+      buttons.map((b) => [b]),
+    );
   };
 
   const help = (): string => {
@@ -76,6 +119,10 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
       );
     }
 
+    if (competition.enabled || promo?.config.enabled) {
+      lines.push('<i>Or just paste a contract address and pick from the buttons.</i>', '');
+    }
+
     if (channelUrl) lines.push(`The channel: ${channelUrl}`);
     // Nothing on offer and nothing to point at would leave a blank message, which reads worse
     // than saying so.
@@ -86,9 +133,16 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
   return async (dm: DirectMessage): Promise<void> => {
     const verb = parseVerb(dm.text);
 
-    // Not a command at all. Someone who types "hey" gets told what this thing is, which is the
-    // entire reason for having the DM surface open.
-    if (!verb) return reply(dm.chatId, help());
+    if (!verb) {
+      // A bare contract address is an intention, not a greeting, and it is what the button on
+      // the pinned leaderboard produces.
+      const bare = dm.text.trim();
+      if (classifyAddress(bare)) return offer(dm, bare);
+
+      // Anything else. Someone who types "hey" gets told what this thing is, which is the
+      // entire reason for having the DM surface open.
+      return reply(dm.chatId, help());
+    }
 
     switch (verb.name) {
       case 'promote':
@@ -127,4 +181,9 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
         return reply(dm.chatId, help());
     }
   };
+}
+
+/** Enough of an address to recognise, without a wall of base58 in the middle of a sentence. */
+function short(address: string): string {
+  return address.length > 16 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
 }
