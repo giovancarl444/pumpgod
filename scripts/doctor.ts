@@ -1,5 +1,5 @@
 import { Api, TelegramClient } from 'telegram';
-import { loadConfig, loadSources, type AppConfig } from '../src/config';
+import { loadConfig, loadPresentation, loadSources, type AppConfig, type PresentationConfig } from '../src/config';
 import { createClient, primeEntityCache, resolveInputPeer } from '../src/telegram/client';
 import { FIRE, SKIP } from '../src/pipeline/router';
 import { resolveManualCall } from '../src/pipeline/manual';
@@ -54,7 +54,8 @@ class Report {
     return this.checks.filter((c) => c.status === status).length;
   }
 
-  render(): void {
+  /** `unconfigured` when the account is not set up yet, which is a different thing from broken. */
+  render(unconfigured = false): void {
     console.log(`\n  pumpgod doctor · nothing is sent, nothing is written\n`);
 
     for (const section of SECTIONS) {
@@ -74,7 +75,9 @@ class Report {
     const failed = this.count('fail');
     const warned = this.count('warn');
     console.log(`  ${'═'.repeat(WIDTH)}`);
-    if (failed) {
+    if (failed && unconfigured) {
+      console.log(`  ✗  ${plural(failed, 'thing')} left to set up. Everything ticked above already works.`);
+    } else if (failed) {
       console.log(
         `  ✗  ${plural(failed, 'blocking problem')}${warned ? `, ${plural(warned, 'warning')}` : ''} — ` +
           `pumpgod would start up looking healthy and lose calls.`,
@@ -274,7 +277,7 @@ export function signalRights(entity: Api.TypeChat | Api.TypeUser): Omit<Check, '
  * Probed with a coin that has been listed for years, so a failure here is our network or
  * DexScreener — never the coin.
  */
-async function callPathChecks(config: AppConfig): Promise<Check[]> {
+async function callPathChecks(config: PresentationConfig): Promise<Check[]> {
   const PROBE = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
   const checks: Check[] = [];
 
@@ -336,6 +339,34 @@ async function callPathChecks(config: AppConfig): Promise<Check[]> {
         },
   );
   return checks;
+}
+
+/** Shared so the "not set up yet" run and the real one cannot drift apart on the wording. */
+const NO_CHANNEL: Check = {
+  status: 'fail',
+  label: 'channel',
+  detail: 'PUMPGOD_CHANNEL is not set — there is nowhere to publish',
+  hint: 'put the public channel id (-100…) or @username in .env',
+};
+
+/**
+ * What is missing before Telegram can be reached at all, reported together rather than one
+ * per run.
+ *
+ * `loadConfig` throws on the first blank value, which turns first-time setup into four rounds
+ * of run-it, read-one-error, fill-one-line. All of it is knowable up front, and someone
+ * setting this up wants the whole list in front of them.
+ */
+export function credentialChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
+  const needed: Array<[string, string]> = [
+    ['TG_API_ID', 'https://my.telegram.org → API development tools → copy "App api_id"'],
+    ['TG_API_HASH', 'the "App api_hash" on that same page'],
+    ['TG_SESSION', 'run `npm run login`, then paste the TG_SESSION line it prints into .env'],
+  ];
+
+  return needed
+    .filter(([key]) => !env[key]?.trim())
+    .map(([label, hint]) => ({ status: 'fail' as const, label, detail: 'not set in .env', hint }));
 }
 
 /**
@@ -454,27 +485,25 @@ async function checkSource(client: TelegramClient, source: Source): Promise<Chec
 async function main(): Promise<number> {
   const report = new Report();
 
+  // Nothing below this point can reach Telegram, but the market half of a call never needed
+  // to — so it is proven now rather than held hostage to a login. A first run should say
+  // which parts already work, not only which parts are missing.
+  const missing = credentialChecks();
+  if (missing.length) {
+    for (const check of missing) report.add('Account', check);
+    if (!process.env.PUMPGOD_CHANNEL?.trim()) report.add('Destinations', NO_CHANNEL);
+    for (const check of await callPathChecks(loadPresentation())) report.add('Calling', check);
+    report.render(true);
+    return 1;
+  }
+
   let config: AppConfig;
   try {
     config = loadConfig();
   } catch (err) {
-    report.add('Account', {
-      status: 'fail',
-      label: 'env',
-      detail: reason(err),
-      hint: 'the API id and hash come from https://my.telegram.org → API development tools',
-    });
-    report.render();
-    return 1;
-  }
-
-  if (!config.session) {
-    report.add('Account', {
-      status: 'fail',
-      label: 'session',
-      detail: 'TG_SESSION is empty',
-      hint: 'run `npm run login`, then paste the session string into .env',
-    });
+    // Everything required is present, so this is a value we cannot make sense of — an unknown
+    // chain in CHAINS is the one that gets here.
+    report.add('Account', { status: 'fail', label: 'env', detail: reason(err) });
     report.render();
     return 1;
   }
@@ -544,12 +573,7 @@ async function main(): Promise<number> {
     ] as const) {
       if (!target) {
         if (label === 'channel') {
-          report.add('Destinations', {
-            status: 'fail',
-            label: 'channel',
-            detail: 'PUMPGOD_CHANNEL is not set — there is nowhere to publish',
-            hint: 'put the public channel id (-100…) or @username in .env',
-          });
+          report.add('Destinations', NO_CHANNEL);
         } else {
           report.add('Destinations', {
             status: 'warn',

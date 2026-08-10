@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Api, TelegramClient } from 'telegram';
 import bigInt from 'big-integer';
-import { postRights, reactionCheck, signalRights } from '../scripts/doctor';
+import { credentialChecks, postRights, reactionCheck, signalRights } from '../scripts/doctor';
 
 /**
  * The doctor only has value if its verdicts are right. Every case here is a real
@@ -200,5 +200,30 @@ describe('reactionCheck', () => {
     expect(check.status).toBe('warn');
     expect(check.detail).toContain('CHAT_ADMIN_REQUIRED');
     expect(check.detail).not.toContain('caused by');
+  });
+});
+
+// Setting this up is four values in a file, and `loadConfig` throws on the first blank one.
+// Reporting them one per run turns a five-minute job into four rounds of guesswork.
+describe('credentialChecks', () => {
+  const filled = { TG_API_ID: '1', TG_API_HASH: 'abc', TG_SESSION: 'sess' };
+
+  it('says nothing once the account is set up', () => {
+    expect(credentialChecks(filled)).toHaveLength(0);
+  });
+
+  it('names every missing value at once, not just the first', () => {
+    const checks = credentialChecks({});
+    expect(checks.map((c) => c.label)).toEqual(['TG_API_ID', 'TG_API_HASH', 'TG_SESSION']);
+    // A missing value is useless without the one place it comes from.
+    for (const check of checks) expect(check.hint).toBeTruthy();
+  });
+
+  it('treats a blank value as missing, since dotenv reads one as an empty string', () => {
+    expect(credentialChecks({ ...filled, TG_SESSION: '   ' }).map((c) => c.label)).toEqual(['TG_SESSION']);
+  });
+
+  it('points at npm run login for the session, which is the only one not on a web page', () => {
+    expect(credentialChecks({ ...filled, TG_SESSION: '' })[0]!.hint).toContain('npm run login');
   });
 });

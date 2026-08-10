@@ -74,7 +74,12 @@ call that already ran, and the public message is edited to say so.
 ```bash
 npm install
 cp .env.example .env
+npm run doctor
 ```
+
+`doctor` runs at any stage. On a blank `.env` it lists every value still needed at once, and
+proves the half of a call that needs no account — that DexScreener answers and artwork
+downloads — so the first thing you see is what already works.
 
 1. **Get API credentials** at <https://my.telegram.org> → *API development tools*. Put
    `TG_API_ID` and `TG_API_HASH` in `.env`. These are for a **user account**, not a bot —
@@ -84,8 +89,8 @@ cp .env.example .env
    gitignored; keep it that way.
 3. **Set destinations** in `.env`: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private
    staging group). Run `npm run dialogs` to list the ids this account can see.
-4. **Check it**: `npm run doctor`. Fix every ✗ before going any further.
-5. **Run**: `npm run dev`, then type `/signal <address>` in your channel.
+4. **Check it**: `npm run doctor` again. Fix every ✗ before going any further.
+5. **Run**: `LIVE=true`, `npm run dev`, then type `/signal <address>` in your channel.
 
 That is a complete setup — you are calling your own coins. Relaying other groups is a
 separate half, and it needs two more steps:
