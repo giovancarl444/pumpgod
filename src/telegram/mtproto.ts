@@ -14,7 +14,13 @@ export function mtprotoPeer(input: Api.TypeInputPeer): MtprotoPeer {
   return { id: peerIdOf(input) ?? '', input };
 }
 
-/** What pumpgod has always done: a user account, over MTProto. */
+/**
+ * What pumpgod has always done: a user account, over MTProto.
+ *
+ * `opts.keyboard` is **deliberately dropped here, and cannot be otherwise** — reply markup is a
+ * bot capability, and Telegram rejects it outright from a user account. So anything a button
+ * offers has to also exist in the message body; see the note on `SendOptions.keyboard`.
+ */
 export class MtprotoTransport implements Transport {
   readonly kind = 'mtproto' as const;
 

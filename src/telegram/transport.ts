@@ -27,6 +27,18 @@ export interface SendResult {
   ackAt: number;
 }
 
+/**
+ * One tappable button. `url` opens something, `data` comes back to us as a callback.
+ *
+ * Telegram caps `callback_data` at 64 **bytes**, which a 44-character Solana address plus a
+ * verb only just fits inside — anything carrying an address has no room to spare.
+ */
+export interface Button {
+  text: string;
+  url?: string;
+  data?: string;
+}
+
 export interface SendOptions {
   /** Which latency bucket to record against. */
   stage?: string;
@@ -39,10 +51,30 @@ export interface SendOptions {
    * losing the thread is a better outcome than losing the message.
    */
   replyTo?: number;
+  /**
+   * Rows of buttons under the message.
+   *
+   * **Dropped by the MTProto transport, silently and unavoidably** — reply markup is a bot
+   * capability, and a user account cannot attach it. So a button may never be the only way to
+   * reach something: whatever it offers has to exist in the message body too, or the same card
+   * sent from the reader account loses it with no error raised anywhere.
+   */
+  keyboard?: Button[][];
 }
 
 export interface PhotoOptions extends SendOptions {
   timeoutMs?: number;
+}
+
+export interface EditOptions {
+  /**
+   * The buttons to leave under the message.
+   *
+   * **Omitting this removes them.** Telegram reads an edit carrying no markup as an edit *to*
+   * no markup, so the enrichment pass that rewrites a card a few seconds after it lands would
+   * quietly strip its own Buy button unless it passes the keyboard again.
+   */
+  keyboard?: Button[][];
 }
 
 export interface Transport {
@@ -50,7 +82,7 @@ export interface Transport {
   /** Turns an `@name` or a `-100…` id from config into something sendable. */
   resolve(target: string): Promise<Peer>;
   send(peer: Peer, html: string, opts?: SendOptions): Promise<SendResult>;
-  edit(peer: Peer, messageId: number, html: string): Promise<void>;
+  edit(peer: Peer, messageId: number, html: string, opts?: EditOptions): Promise<void>;
   /**
    * Falls back to a plain send when the image cannot be fetched in time. A call is worth more
    * on time without artwork than late with it.

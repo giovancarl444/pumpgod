@@ -2,7 +2,7 @@ import { record } from '../metrics/latency';
 import { log } from '../log';
 import { parseHtml } from './html';
 import { CAPTION_LIMIT } from './photo';
-import type { Peer, PhotoOptions, SendOptions, SendResult, Transport } from './transport';
+import type { Button, EditOptions, Peer, PhotoOptions, SendOptions, SendResult, Transport } from './transport';
 
 const BASE = 'https://api.telegram.org';
 
@@ -147,6 +147,38 @@ export function botRights(chatType: string, member: ChatMember): BotRights {
   return { ok: true, detail: `${kind} · admin, can post`, canDelete: member.can_delete_messages !== false };
 }
 
+/**
+ * A button URL Telegram will accept. Anything else is `BUTTON_URL_INVALID`, which fails the
+ * **whole** call — the card does not go out at all. A misconfigured `TRADE_URL_SOL` is a
+ * plausible way to get here, and losing the button is a far smaller loss than losing the call,
+ * so a bad one is dropped rather than sent. The same link is in the message body regardless.
+ */
+function usableUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:' || protocol === 'tg:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Telegram wants `undefined` rather than an empty keyboard, and an empty `inline_keyboard`
+ * array is rejected outright — so a caller passing no buttons must send no markup at all.
+ */
+function markup(keyboard: Button[][] | undefined): unknown {
+  if (!keyboard?.length) return undefined;
+  const rows = keyboard
+    .map((row) => row.filter((b) => (b.url ? usableUrl(b.url) : Boolean(b.data))))
+    .filter((row) => row.length);
+  if (!rows.length) return undefined;
+  return {
+    inline_keyboard: rows.map((row) =>
+      row.map((b) => (b.url ? { text: b.text, url: b.url } : { text: b.text, callback_data: b.data })),
+    ),
+  };
+}
+
 /** A bot: publishes anywhere it is an admin, reads nothing it was not added to. */
 export class BotTransport implements Transport {
   readonly kind = 'bot' as const;
@@ -173,19 +205,21 @@ export class BotTransport implements Transport {
       // Without this, answering a message somebody has since deleted is a hard error and the
       // milestone is lost outright. Landing unthreaded is the lesser failure by a distance.
       allow_sending_without_reply: true,
+      reply_markup: markup(opts.keyboard),
     });
     const ackAt = performance.now();
     record(opts.stage ?? 'send', ackAt - dispatchAt);
     return { messageId: msg.message_id, dispatchAt, ackAt };
   }
 
-  async edit(peer: Peer, messageId: number, html: string): Promise<void> {
+  async edit(peer: Peer, messageId: number, html: string, opts: EditOptions = {}): Promise<void> {
     await this.api.call('editMessageText', {
       chat_id: peer.id,
       message_id: messageId,
       text: html,
       parse_mode: 'HTML',
       disable_web_page_preview: true,
+      reply_markup: markup(opts.keyboard),
     });
   }
 
@@ -206,6 +240,7 @@ export class BotTransport implements Transport {
         caption: html,
         parse_mode: 'HTML',
         disable_notification: opts.silent ?? false,
+        reply_markup: markup(opts.keyboard),
       });
       const ackAt = performance.now();
       record(`${opts.stage ?? 'send'}.photo`, ackAt - dispatchAt);

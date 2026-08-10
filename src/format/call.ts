@@ -1,4 +1,5 @@
 import type { Signal } from '../types';
+import type { Button } from '../telegram/transport';
 import { chainLabel, dexScreenerUrl, explorerUrl, hasTradeUrl, tradeUrl } from '../parse/chains';
 
 export interface RenderOptions {
@@ -163,6 +164,31 @@ export function renderPublicCall(signal: Signal, opts: RenderOptions): string {
   if (opts.footer) lines.push('', `<i>${escapeHtml(opts.footer)}</i>`);
 
   return lines.join('\n');
+}
+
+/**
+ * The links again, as buttons — a thumb-sized target instead of a word in a row of words.
+ *
+ * **Strictly additive.** The anchor row inside the card stays exactly where it is, because the
+ * MTProto transport drops reply markup and cannot do otherwise: the same card posted from the
+ * reader account would lose its Buy link with no error raised anywhere. A button is a nicer way
+ * to reach something that is already reachable, never the only way.
+ *
+ * Buy leads, because it is the only line on the card that earns anything.
+ */
+export function callButtons(signal: Signal, opts: RenderOptions): Button[][] {
+  const { token, pairAddress } = signal.call;
+  const templates = { sol: opts.tradeUrlSol, evm: opts.tradeUrlEvm };
+
+  const row: Button[] = [];
+  if (hasTradeUrl(token.chain, templates)) {
+    row.push({ text: '⚡ Buy now', url: tradeUrl(token.chain, token.address, templates) });
+  }
+  row.push({ text: '📊 Chart', url: dexScreenerUrl(token.chain, pairAddress, token.address) });
+
+  const rows = [row];
+  if (opts.referralUrl) rows.push([{ text: opts.referralLabel, url: opts.referralUrl }]);
+  return rows;
 }
 
 /** The first line answers "why is this in front of me", which is not always the source's mode. */

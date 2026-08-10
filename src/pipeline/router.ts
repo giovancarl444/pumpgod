@@ -1,7 +1,7 @@
 import type { AppConfig } from '../config';
 import type { ParsedCall, Signal, Source } from '../types';
 import { parseCall } from '../parse';
-import { renderPublicCall, renderWarRoomCall } from '../format/call';
+import { callButtons, renderPublicCall, renderWarRoomCall } from '../format/call';
 import type { Peer, Transport } from '../telegram/transport';
 import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
@@ -261,6 +261,7 @@ export class Router {
 
     try {
       const html = renderPublicCall(signal, this.config);
+      const keyboard = callButtons(signal, this.config);
       // A relayed call has no artwork yet — it arrives as text from another group, and the
       // image only exists once enrichment has been to the market. So this attaches a photo
       // for calls we resolved up front, and stays a plain fast send for the ones we are
@@ -270,8 +271,9 @@ export class Router {
         ? await this.transport.sendPhoto(this.channelPeer, image, html, {
             stage: 'send.public',
             timeoutMs: this.config.enrichTimeoutMs,
+            keyboard,
           })
-        : await this.transport.send(this.channelPeer, html, { stage: 'send.public' });
+        : await this.transport.send(this.channelPeer, html, { stage: 'send.public', keyboard });
 
       signal.timings.dispatchAt = sent.dispatchAt;
       signal.timings.ackAt = sent.ackAt;
@@ -318,7 +320,11 @@ export class Router {
     }
 
     try {
-      await this.transport.edit(this.channelPeer, messageId, renderPublicCall(enriched, this.config));
+      // The keyboard goes back with the text, or this edit takes the Buy button off a card
+      // that has been live for all of two seconds.
+      await this.transport.edit(this.channelPeer, messageId, renderPublicCall(enriched, this.config), {
+        keyboard: callButtons(enriched, this.config),
+      });
     } catch (err) {
       log.debug('enrich edit skipped', (err as Error).message);
     }

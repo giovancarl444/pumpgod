@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Api } from 'telegram';
 import { parseHtml } from '../src/telegram/html';
-import { renderPublicCall, type RenderOptions } from '../src/format/call';
+import { callButtons, renderPublicCall, type RenderOptions } from '../src/format/call';
 import type { Signal } from '../src/types';
 
 describe('parseHtml', () => {
@@ -183,5 +183,59 @@ describe('renderPublicCall', () => {
     const withRef = renderPublicCall(signalFixture(), opts({ referralUrl: 'https://axiom.trade/@pumpgod' }));
     expect(withRef).toContain('https://axiom.trade/@pumpgod');
     expect(withRef).toContain('Trade these faster');
+  });
+});
+
+/**
+ * Buttons are bot-only: a user account cannot attach reply markup, and the MTProto transport
+ * therefore drops them with no error raised anywhere. So the test that matters is not what the
+ * buttons say — it is that the same card is still complete without any of them.
+ */
+describe('callButtons', () => {
+  function sol(): Signal {
+    const signal = signalFixture();
+    signal.call.token.chain = 'solana';
+    return signal;
+  }
+
+  it('leads with Buy, because it is the only line on the card that earns anything', () => {
+    const signal = sol();
+    const [row] = callButtons(signal, opts());
+    expect(row!.map((b) => b.text)).toEqual(['⚡ Buy now', '📊 Chart']);
+    expect(row![0]!.url).toBe(`https://axiom.trade/t/${signal.call.token.address}`);
+  });
+
+  it('never duplicates a link the card does not already carry in its body', () => {
+    // The rule the MTProto path depends on. Every button URL has to appear as an anchor too,
+    // or the same call posted from the reader account silently loses the way to act on it.
+    const signal = sol();
+    const options = opts({ referralUrl: 'https://axiom.trade/@pumpgod' });
+    const html = renderPublicCall(signal, options);
+
+    for (const button of callButtons(signal, options).flat()) {
+      expect(html).toContain(`href="${button.url}"`);
+    }
+  });
+
+  it('offers no Buy button where there is no terminal, matching the card', () => {
+    // Robinhood chain with a blank EVM template: a DexScreener search wearing a Buy label is
+    // worse than no button, and worse still as a thumb-sized one.
+    const rows = callButtons(signalFixture(), opts());
+    expect(rows.flat().map((b) => b.text)).toEqual(['📊 Chart']);
+  });
+
+  it('adds the referral row only when one is configured', () => {
+    expect(callButtons(sol(), opts())).toHaveLength(1);
+    const withRef = callButtons(sol(), opts({ referralUrl: 'https://axiom.trade/@pumpgod' }));
+    expect(withRef).toHaveLength(2);
+    expect(withRef[1]![0]).toMatchObject({ text: 'Trade these faster', url: 'https://axiom.trade/@pumpgod' });
+  });
+
+  it('carries no callback data at all, so nothing needs answering within 10s', () => {
+    const rows = callButtons(sol(), opts({ referralUrl: 'https://axiom.trade/@pumpgod' }));
+    for (const button of rows.flat()) {
+      expect(button.url).toBeTruthy();
+      expect(button.data).toBeUndefined();
+    }
   });
 });

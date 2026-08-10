@@ -159,6 +159,74 @@ describe('sending a card with artwork', () => {
 });
 
 /**
+ * Buttons are the one thing on the card that only the bot can do, and every failure here takes
+ * the whole call with it: Telegram refuses an empty keyboard, refuses a malformed URL, and
+ * treats an edit carrying no markup as an instruction to remove the buttons.
+ */
+describe('buttons under a card', () => {
+  const BUY = [[{ text: '⚡ Buy now', url: 'https://axiom.trade/t/abc' }]];
+
+  it('sends the keyboard Telegram expects', async () => {
+    const { calls, transport } = api();
+    await transport.send(PEER, CARD, { keyboard: BUY });
+
+    expect(calls[0]!.params.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '⚡ Buy now', url: 'https://axiom.trade/t/abc' }]],
+    });
+  });
+
+  it('carries them on a card with artwork too', async () => {
+    const { calls, transport } = api();
+    await transport.sendPhoto(PEER, 'https://cdn.example/coin.png', CARD, { keyboard: BUY });
+
+    expect(calls[0]!.method).toBe('sendPhoto');
+    expect(calls[0]!.params.reply_markup).toMatchObject({ inline_keyboard: expect.anything() });
+  });
+
+  // An empty `inline_keyboard` is rejected outright, so a caller with nothing to show must
+  // send no markup at all rather than an empty one.
+  it('sends no markup rather than an empty keyboard', async () => {
+    const { calls, transport } = api();
+    await transport.send(PEER, CARD);
+    await transport.send(PEER, CARD, { keyboard: [] });
+    await transport.send(PEER, CARD, { keyboard: [[]] });
+
+    for (const call of calls) expect(call.params.reply_markup).toBeUndefined();
+  });
+
+  // BUTTON_URL_INVALID fails the send, not the button — the card never appears. A blank
+  // `TRADE_URL_SOL` is a plausible way to get here, and losing a call over it is not.
+  it('drops a button whose URL Telegram would refuse, and sends the call anyway', async () => {
+    const { calls, transport } = api();
+    await transport.send(PEER, CARD, {
+      keyboard: [[{ text: 'Buy', url: '{address}' }, { text: 'Chart', url: 'https://dexscreener.com/x' }]],
+    });
+
+    expect(calls[0]!.params.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Chart', url: 'https://dexscreener.com/x' }]],
+    });
+  });
+
+  it('sends no markup when every button in it was unusable', async () => {
+    const { calls, transport } = api();
+    await transport.send(PEER, CARD, { keyboard: [[{ text: 'Buy', url: 'not a url' }]] });
+
+    expect(calls[0]!.params.reply_markup).toBeUndefined();
+    expect(calls[0]!.params.text).toBe(CARD);
+  });
+
+  // The enrichment pass rewrites a card seconds after it lands. An edit that forgot the
+  // keyboard would take the Buy button off the call at exactly the moment people are reading it.
+  it('keeps the buttons through an edit that passes them again', async () => {
+    const { calls, transport } = api();
+    await transport.edit(PEER, 7, CARD, { keyboard: BUY });
+
+    expect(calls[0]!.method).toBe('editMessageText');
+    expect(calls[0]!.params.reply_markup).toMatchObject({ inline_keyboard: expect.anything() });
+  });
+});
+
+/**
  * What the bot may do where. Every verdict here is one the doctor prints as a ✓ or a ✗ before
  * a call depends on it, so a wrong branch is worse than no check: it certifies a channel that
  * will swallow every call.
