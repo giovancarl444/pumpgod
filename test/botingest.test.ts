@@ -232,3 +232,24 @@ describe('who may publish through us', () => {
     await expect(a.allows(cmd())).resolves.toBe(false);
   });
 });
+
+/**
+ * The long poll and Node's own HTTP client each have a deadline, and only one of them is
+ * visible in this file. Telegram sends nothing at all while it waits, so if the poll is
+ * allowed to run as long as `fetch` will wait for headers, the two expire together and
+ * whichever wins is decided by network latency — which in production meant fetch, every
+ * quiet half-minute, forever.
+ */
+describe('the long poll deadline', () => {
+  it('expires before fetch gives up on the response', async () => {
+    const run = poll([]);
+    await run.idle;
+
+    // undici's headersTimeout, which the fetch API gives no way to raise.
+    const FETCH_HEADERS_TIMEOUT_SEC = 30;
+    const asked = run.asked[1]!.timeout as number;
+
+    expect(asked).toBeGreaterThan(0);
+    expect(asked).toBeLessThan(FETCH_HEADERS_TIMEOUT_SEC);
+  });
+});

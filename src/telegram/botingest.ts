@@ -79,6 +79,17 @@ export class BotAdmins implements Admins {
  * for a coin that moved hours ago, and republishing it is worse than missing it: the card would
  * carry an entry price nobody could have got. Confirming the backlog unread is how that is said.
  */
+/**
+ * How long Telegram is asked to hold an idle connection open.
+ *
+ * Deliberately under 30. Node's `fetch` abandons a response whose headers have not arrived
+ * within 30s — undici's `headersTimeout`, which is not reachable through the fetch API — and
+ * Telegram sends nothing at all until it has an update or the poll expires. Asking for exactly
+ * 30 made the two deadlines a dead heat that fetch won, so every quiet half-minute produced
+ * `getUpdates failed: fetch failed` and a 3s deaf gap, on a loop, forever.
+ */
+const POLL_SECONDS = 25;
+
 export function startBotIngest(
   api: BotApi,
   control: ControlChats,
@@ -144,12 +155,12 @@ export function startBotIngest(
           'getUpdates',
           {
             offset,
-            timeout: 30,
+            timeout: POLL_SECONDS,
             // Reactions are not delivered at all unless they are asked for by name, which is
             // what the 🚀 approval in the war room rides on.
             allowed_updates: ['message', 'channel_post', 'message_reaction'],
           },
-          40_000,
+          (POLL_SECONDS + 5) * 1000,
         );
 
         for (const update of updates) {
