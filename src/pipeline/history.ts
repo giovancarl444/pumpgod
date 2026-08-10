@@ -8,15 +8,26 @@ const BASE = 'https://api.geckoterminal.com/api/v2';
  * — `ethereum` is `eth`, `polygon` is `polygon_pos`. Only slugs confirmed against the live
  * `/networks` index are listed; an unmapped chain skips the backfill rather than guessing a
  * slug, because a wrong one 404s silently and looks exactly like a coin with no history.
+ *
+ * That silence is the reason this map is exported and pinned by a test. A chain missing from
+ * here is not an error anywhere: the call resolves, the card publishes, and the entry price
+ * quietly falls back to whatever the price happened to be when we looked — which for a scraped
+ * call is hours of move credited to the group that called it. Four chains we already parse were
+ * absent, and it cost a quarter of the sample before anyone noticed, because every symptom of
+ * it is identical to a coin too new to have candles.
  */
-const NETWORK: Partial<Record<Chain, string>> = {
+export const NETWORK: Partial<Record<Chain, string>> = {
   solana: 'solana',
   ethereum: 'eth',
+  base: 'base',
   bsc: 'bsc',
   polygon: 'polygon_pos',
   avalanche: 'avax',
   arbitrum: 'arbitrum',
+  blast: 'blast',
+  sui: 'sui-network',
   tron: 'tron',
+  ton: 'ton',
   hyperliquid: 'hyperliquid',
 };
 

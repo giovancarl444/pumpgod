@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pacing, peakSince, priceAt } from '../src/pipeline/history';
+import { NETWORK, pacing, peakSince, priceAt } from '../src/pipeline/history';
 import { log } from '../src/log';
+import type { Chain } from '../src/types';
 
 const T0 = 1_700_000_000_000;
 const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9';
@@ -123,5 +124,42 @@ describe('reading a peak off the chart', () => {
   it('survives a pool with no candles at all', async () => {
     serve(JSON.stringify({ data: { attributes: { ohlcv_list: [] } } }));
     expect(await peakSince('solana', POOL, T0)).toBeUndefined();
+  });
+
+  /**
+   * A chain we can publish but cannot price is the worst shape of bug this file has, because
+   * nothing anywhere reports it. The call resolves, the card goes out, and the entry price
+   * silently becomes "whatever it cost when we happened to look" — which on a scraped call is
+   * hours of move handed to or taken from the group being measured.
+   *
+   * `base`, `blast`, `sui` and `ton` were all missing while being fully parseable, and it cost
+   * a quarter of the sample. The map below is exhaustive over `Chain` on purpose: adding a new
+   * chain to the union fails to compile until someone states, here, whether it can be priced.
+   */
+  it('can price every chain it will accept a call on', () => {
+    const priceable: Record<Chain, boolean> = {
+      solana: true,
+      ethereum: true,
+      base: true,
+      bsc: true,
+      arbitrum: true,
+      polygon: true,
+      avalanche: true,
+      blast: true,
+      sui: true,
+      tron: true,
+      ton: true,
+      hyperliquid: true,
+      // Not a chain GeckoTerminal indexes, and `unknown` is the absence of an answer rather
+      // than a place. Both fall back to the live price, which is the honest thing to do when
+      // there is no chart to read — it is the *undeclared* fallbacks above that were the bug.
+      robinhood: false,
+      unknown: false,
+    };
+
+    const missing = Object.entries(priceable)
+      .filter(([chain, expected]) => expected && !NETWORK[chain as Chain])
+      .map(([chain]) => chain);
+    expect(missing).toEqual([]);
   });
 });
