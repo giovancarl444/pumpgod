@@ -169,6 +169,10 @@ export class BotTransport implements Transport {
       parse_mode: 'HTML',
       disable_web_page_preview: true,
       disable_notification: opts.silent ?? false,
+      reply_to_message_id: opts.replyTo,
+      // Without this, answering a message somebody has since deleted is a hard error and the
+      // milestone is lost outright. Landing unthreaded is the lesser failure by a distance.
+      allow_sending_without_reply: true,
     });
     const ackAt = performance.now();
     record(opts.stage ?? 'send', ackAt - dispatchAt);

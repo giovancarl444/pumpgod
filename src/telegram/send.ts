@@ -17,7 +17,7 @@ export async function sendFast(
   client: TelegramClient,
   peer: Api.TypeInputPeer,
   html: string,
-  opts: { stage: string; silent?: boolean } = { stage: 'send' },
+  opts: { stage: string; silent?: boolean; replyTo?: number } = { stage: 'send' },
 ): Promise<SendResult> {
   const { text, entities } = parseHtml(html);
   const dispatchAt = performance.now();
@@ -29,6 +29,7 @@ export async function sendFast(
       randomId: helpers.generateRandomLong(),
       noWebpage: true,
       silent: opts.silent ?? false,
+      replyTo: opts.replyTo ? new Api.InputReplyToMessage({ replyToMsgId: opts.replyTo }) : undefined,
     }),
   );
   const ackAt = performance.now();

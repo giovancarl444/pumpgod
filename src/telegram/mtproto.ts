@@ -28,6 +28,7 @@ export class MtprotoTransport implements Transport {
     return sendFast(this.client, (peer as MtprotoPeer).input, html, {
       stage: opts.stage ?? 'send',
       silent: opts.silent,
+      replyTo: opts.replyTo,
     });
   }
 

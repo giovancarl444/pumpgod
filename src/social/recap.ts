@@ -40,6 +40,41 @@ export function reached(call: TrackedCall, minMultiple: number): Milestone[] {
   return MILESTONES.filter((m) => m >= minMultiple && peak >= m).reverse();
 }
 
+/** Stable identity for one announcement, so nothing is ever said twice. */
+export function milestoneKey(call: TrackedCall, milestone: Milestone): string {
+  return `${call.chain}:${call.address}:${milestone}x`;
+}
+
+export interface Due {
+  milestone: Milestone;
+  key: string;
+  /** The smaller milestones this one speaks for, marked off only once it has actually gone out. */
+  settles: string[];
+}
+
+/**
+ * The single milestone worth announcing for a call right now, or nothing.
+ *
+ * Shared rather than reimplemented because X and Telegram announce the same events, and two
+ * copies of "which milestone" would eventually disagree — at which point the feed and the
+ * channel are telling different stories about the same coin, in public.
+ *
+ * Only the best one counts. A coin that ran 12x between two polls should not also produce a
+ * 5x announcement on the way past; that reads as padding, and padding is what everyone else
+ * does.
+ */
+export function bestDue(call: TrackedCall, sent: (key: string) => boolean, minMultiple: number): Due | undefined {
+  if (!isPublished(call)) return undefined;
+
+  const hit = reached(call, minMultiple);
+  const best = hit[0];
+  if (best === undefined) return undefined;
+
+  const key = milestoneKey(call, best);
+  if (sent(key)) return undefined;
+  return { milestone: best, key, settles: hit.map((m) => milestoneKey(call, m)) };
+}
+
 /**
  * The post that does the actual recruiting: a number, how fast it happened, and where to
  * be next time. Kept short deliberately — the multiple is the argument, everything else

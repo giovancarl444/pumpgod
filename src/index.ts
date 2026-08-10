@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH, type AppConfig } from './config';
 import { Poster } from './social/poster';
+import { Followups } from './social/followup';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { MtprotoTransport } from './telegram/mtproto';
 import { BotApi, BotTransport } from './telegram/botapi';
@@ -14,7 +15,23 @@ import { createCommandHandler } from './pipeline/command';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
 import { log } from './log';
+import type { Transport } from './telegram/transport';
 import type { Source } from './types';
+
+/**
+ * Milestone replies, on the tracker's own cadence and off its live map — `Tracker.read()` is
+ * a poll behind, and there is no reason for a 10x to be announced a minute after we knew.
+ *
+ * Nothing to gate on beyond `live`: a call that was never published has no card to answer, so
+ * `due()` skips it on its own.
+ */
+function startFollowups(transport: Transport, tracker: Tracker, config: AppConfig): NodeJS.Timeout | undefined {
+  if (!config.live) return undefined;
+  const followups = new Followups();
+  followups.load();
+  log.info('↳ milestone replies on · a call that runs gets answered under its own card');
+  return setInterval(() => void followups.run(transport, tracker.list()), config.trackIntervalMs);
+}
 
 async function main() {
   const config = loadConfig();
@@ -130,6 +147,8 @@ async function main() {
     log.warn('𝕏 credentials set but LIVE=false — nothing will be posted. Preview with `npm run recap`.');
   }
 
+  const followupTimer = startFollowups(transport, tracker, config);
+
   log.info(
     `pumpgod live · ${watched.size} sources · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`,
   );
@@ -144,6 +163,7 @@ async function main() {
     clearInterval(metrics);
     clearInterval(catchupTimer);
     if (socialTimer) clearInterval(socialTimer);
+    if (followupTimer) clearInterval(followupTimer);
     log.info('shutting down');
     log.info(formatSnapshot());
     // Persisting the cursors is what lets the next start recover the gap it left behind.
@@ -216,6 +236,8 @@ async function runBot(config: AppConfig) {
     log.warn('𝕏 credentials set but LIVE=false — nothing will be posted. Preview with `npm run recap`.');
   }
 
+  const followupTimer = startFollowups(transport, tracker, config);
+
   log.info(`pumpgod live · bot mode · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`);
   if (!config.live) log.warn('LIVE=false — calls are logged but never posted. Flip LIVE=true when ready.');
   log.info('type /signal <address> in the channel or the war room to call a coin');
@@ -228,6 +250,7 @@ async function runBot(config: AppConfig) {
   const shutdown = () => {
     clearInterval(metrics);
     if (socialTimer) clearInterval(socialTimer);
+    if (followupTimer) clearInterval(followupTimer);
     ingest.stop();
     log.info('shutting down');
     log.info(formatSnapshot());

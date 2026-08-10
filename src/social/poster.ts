@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
 import { Tracker, type TrackedCall } from '../track/tracker';
-import { dailyRecap, isPublished, milestonePost, reached, type Milestone, type RecapOptions } from './recap';
+import { bestDue, dailyRecap, milestonePost, type RecapOptions } from './recap';
 import { loadCredentials, postTweet, tweetLength, TWEET_LIMIT, type XCredentials } from './x';
 import { log } from '../log';
 
@@ -75,18 +75,11 @@ export class Poster {
     const posts: Post[] = [];
 
     for (const call of calls) {
-      if (!isPublished(call)) continue;
-      const hit = reached(call, this.options.minMultiple);
-      if (!hit.length) continue;
+      const due = bestDue(call, (key) => this.sent.has(key), this.options.minMultiple);
+      if (!due) continue;
 
-      // Only the best milestone is worth a post. A coin that ran 12x between two polls
-      // should not produce a 5x post as well — that reads as padding.
-      const best = hit[0]!;
-      const key = milestoneKey(call, best);
-      if (this.sent.has(key)) continue;
-
-      const text = milestonePost(call, best, this.options);
-      if (text) posts.push({ key, text, settles: hit.map((m) => milestoneKey(call, m)) });
+      const text = milestonePost(call, due.milestone, this.options);
+      if (text) posts.push({ key: due.key, text, settles: due.settles });
     }
 
     if (this.options.dailyRecap) {
@@ -142,10 +135,6 @@ export class Poster {
 
     this.persist();
   }
-}
-
-function milestoneKey(call: TrackedCall, milestone: Milestone): string {
-  return `${call.chain}:${call.address}:${milestone}x`;
 }
 
 function localDate(d: Date): string {

@@ -52,6 +52,10 @@ export interface TrackedCall {
   retired?: boolean;
   /** The pool we first saw this trading in, kept so the peak can be checked against candles. */
   poolAddress?: string;
+  /** Where the card went, so a milestone can be reported under the call that made it. */
+  postChatId?: string;
+  postMessageId?: number;
+  postThreadId?: number;
   /** The peak was confirmed against the chart rather than left as whatever we sampled. */
   athFromChart?: boolean;
 }
@@ -182,6 +186,18 @@ export class Tracker {
     this.calls.set(k, created);
     this.dirty = true;
     return created;
+  }
+
+  /**
+   * Where a call's card ended up. Recorded so a milestone can be announced as a reply to the
+   * call itself — a number under the original message is checkable at a glance, where the
+   * same number in a fresh post is a claim about a call the reader has to go and find.
+   */
+  published(call: TrackedCall, chatId: string, messageId: number, threadId?: number): void {
+    call.postChatId = chatId;
+    call.postMessageId = messageId;
+    call.postThreadId = threadId;
+    this.dirty = true;
   }
 
   /**

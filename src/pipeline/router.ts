@@ -284,7 +284,13 @@ export class Router {
         `🚀 CALLED ${label(signal)} · ${(sent.ackAt - signal.timings.recvAt).toFixed(1)}ms end-to-end`,
       );
       journal.write('called', this.record(signal));
-      this.tracker?.track(signal, 'called');
+      const tracked = this.tracker?.track(signal, 'called');
+      // Remembered here because this is the only point that holds both the coin and where its
+      // card landed. Without it a milestone can only be announced as a fresh message, which
+      // asks the reader to take the entry price on trust instead of scrolling up to it.
+      if (tracked && sent.messageId) {
+        this.tracker?.published(tracked, this.channelPeer.id, sent.messageId, this.channelPeer.threadId);
+      }
 
       if (this.config.enrichEnabled && sent.messageId && !signal.enriched) {
         void this.upgrade(signal, sent.messageId);

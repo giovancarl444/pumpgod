@@ -31,6 +31,14 @@ export interface SendOptions {
   /** Which latency bucket to record against. */
   stage?: string;
   silent?: boolean;
+  /**
+   * Hang this message under an earlier one. Used to report a milestone beneath the call that
+   * made it, so the claim and its entry price are read together.
+   *
+   * Best effort by design: the message being answered may have been deleted or aged out, and
+   * losing the thread is a better outcome than losing the message.
+   */
+  replyTo?: number;
 }
 
 export interface PhotoOptions extends SendOptions {
