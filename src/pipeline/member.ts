@@ -118,6 +118,11 @@ export function createMemberHandlers(deps: MemberDeps): MemberHandlers {
       'It is priced every minute for 24 hours and scored on its peak. ' +
         'Nothing you submit is posted in the channel — only the result reaches the leaderboard.',
       '',
+      // Said out loud because it is the difference between a competition and a form. Somebody
+      // who does not know a message is coming has to remember to come back and check, and the
+      // ones who forget are the ones who never enter a second pick.
+      "If it runs, I'll message you. You do not have to watch it.",
+      '',
       'See where you stand with /me, or the table with /leaderboard.',
     ]
       .filter((line) => line !== undefined)

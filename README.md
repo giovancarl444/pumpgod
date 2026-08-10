@@ -472,6 +472,32 @@ tapping the button. It is never acted on unasked — a pick costs a member their
 and a promotion costs money — so it comes back as a choice, with the address already loaded into
 the buttons so answering is one tap rather than another paste.
 
+**When a member's pick runs, the bot tells them.** 2x, 5x, 10x and up, in a DM, once each:
+
+```
+  🎯 Your pick $ZHAO hit 5x
+
+  $33K → $165K in 42m
+
+  2 more priced picks and you are on the table.
+```
+
+Without this the competition is a table you have to remember to go and look at, and a member
+whose pick 10x'd overnight finds out by typing `/me` — if it occurs to them. The pick is the one
+thing in the product that is *theirs*, so it is the one event worth interrupting somebody for,
+and it arrives at the moment they are most likely to tell somebody about it. The line underneath
+is a position for a ranked member and a countdown for everyone else, because "2 more and you are
+on the table" asks for the next entry at the only moment anyone wants to give one.
+
+It runs on the same sweep as the milestone replies and the pinned boards, off the same snapshot —
+three readers quoting three different numbers for one coin, seconds apart, is the failure that
+matters here. It is also the only thing in the codebase that deliberately acts on a call
+`isPublished()` refuses, so the gate it uses instead is at least as tight: the outcome must be
+`member`, and the destination is read out of that record's own `member:<id>` source id rather
+than from config, so no value it can hold resolves to the channel. A member who has blocked the
+bot is marked done rather than retried — otherwise one of them is a warning every minute for a
+day, and the real failure underneath is never seen.
+
 ## Making money from it
 
 Trading terminals attribute a referral when someone **signs up** through your link, then pay a
@@ -538,10 +564,10 @@ call, and a DM surface sells a clearly-marked promotion slot for Stars that is s
 barred from the track record.
 
 **Done — member calls.** Members submit picks by DM, priced by the same tracker on the same
-schedule, ranked on median peak with a minimum sample. Turns lurkers into competitors and gives
-people who never call anything a reason to stay. A member's pick can never reach the public feed:
-`isPublished()` is the single gate, and the outcome ranks above `called` so nothing can upgrade
-one into a call of ours.
+schedule, ranked on median peak with a minimum sample, and told in a DM when one of their picks
+runs. Turns lurkers into competitors and gives people who never call anything a reason to stay.
+A member's pick can never reach the public feed: `isPublished()` is the single gate, and the
+outcome ranks above `called` so nothing can upgrade one into a call of ours.
 
 **Done — buttons that do something.** `callback_query` is answered, so a contract address pasted
 into a DM comes back as a choice — enter it in the competition, or buy a slot — with the address
@@ -567,7 +593,8 @@ src/
   metrics/    latency histograms
   store/      journal (buffered, off the hot path); promo orders and members (on disk)
   track/      outcome tracking — entry, peak, milestones, rugs; and what it all adds up to
-  social/     the record, published — X feed, in-channel milestone replies, pinned scoreboard
+  social/     the record, published — X feed, in-channel milestone replies, pinned boards,
+              and the DM a member gets when their own pick runs
 scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap,
               scoreboard, leaderboard
 ```

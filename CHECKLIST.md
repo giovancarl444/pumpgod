@@ -143,6 +143,11 @@ someone says it exists.
 get a confirmation with the entry market cap, that `/me` shows the pick, and that `npm run
 scoreboard` does **not** count it.
 
+Pick something already moving, or nothing else will happen while you watch. If it doubles you
+should get a second DM — `🎯 Your pick … hit 2x` — within a minute of it happening. That message
+is the competition's entire retention loop, so it is worth seeing once with your own eyes before
+you tell anybody the competition exists.
+
 Then `npm run leaderboard` to preview and `npm run leaderboard -- --pin` to post and pin it —
 **pin it empty**, before anyone has entered. A table saying "nobody has entered yet, here is how"
 is the announcement, and it edits itself from then on. Note that Telegram shows the newest pin

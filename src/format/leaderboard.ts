@@ -27,6 +27,10 @@ export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig
       '',
       `Nobody has entered yet. ${dm(bot)} <code>/submit &lt;contract address&gt;</code> ` +
         `— ${picksPerDay(comp)}, priced for 24 hours, scored on the peak.`,
+      '',
+      // The two things a lurker actually wants to know before entering, answered before they
+      // have to ask: nobody sees their pick, and nobody has to sit watching a chart.
+      '<i>Your picks are never posted here. You are messaged when one of them runs.</i>',
     ].join('\n');
   }
 

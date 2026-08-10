@@ -104,7 +104,8 @@ export function createDirectHandler(deps: DirectDeps): (dm: DirectMessage) => Pr
           'priced for 24 hours, scored on the peak.',
         '<code>/leaderboard</code> · <code>/me</code>',
         '',
-        '<i>Your picks are never posted in the channel. Only the numbers reach the table.</i>',
+        '<i>Your picks are never posted in the channel. Only the numbers reach the table — ' +
+          'and I message you when one of them runs.</i>',
         '',
       );
     }

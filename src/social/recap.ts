@@ -77,15 +77,19 @@ export function milestonePost(call: TrackedCall, milestone: Milestone, opts: Rec
     if (at && now) lines.push(`called at ${at} → ${now}`);
   }
 
-  const seconds = elapsedTo(call, milestone);
+  const seconds = timeToMilestone(call, milestone);
   if (seconds !== undefined) lines.push(duration(seconds));
 
   if (opts.channelUrl) lines.push('', opts.channelUrl);
   return lines.join('\n');
 }
 
-/** How long the run took, where we recorded it. Only the tracked milestones have a time. */
-function elapsedTo(call: TrackedCall, milestone: Milestone): number | undefined {
+/**
+ * How long the run took, where we recorded it. Only 2x, 5x and 10x have a time — the rest of
+ * the run is known by its peak alone, and a caller who wants a number for a 25x has to be told
+ * how long the coin has been alive instead, which is a different claim and has to read like one.
+ */
+export function timeToMilestone(call: TrackedCall, milestone: Milestone): number | undefined {
   const field = TIME_TO[milestone];
   const value = field ? call[field] : undefined;
   return typeof value === 'number' ? value : undefined;
