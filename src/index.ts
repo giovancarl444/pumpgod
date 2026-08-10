@@ -20,13 +20,6 @@ async function main() {
   const config = loadConfig();
   if (config.botToken) return runBot(config);
 
-  if (!config.session) {
-    throw new Error(
-      'No credentials. Either set TG_BOT_TOKEN from BotFather to publish, or run `npm run setup` ' +
-        'to log a user account in — which is the only way to read other groups.',
-    );
-  }
-
   // Relaying and calling coins ourselves are independent halves, so a missing sources file is
   // a shape this can legitimately run in rather than an error: `/signal` needs a channel, not
   // a list of groups to follow. A file that exists and is malformed still throws — that is a

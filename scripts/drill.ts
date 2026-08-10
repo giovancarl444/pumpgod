@@ -167,14 +167,33 @@ async function main(): Promise<number> {
   }
 
   let config: AppConfig;
-  let sources: Source[];
   try {
     config = loadConfig();
+  } catch (err) {
+    return fail(reason(err));
+  }
+
+  // Which credential is in use decides whether there is anything here to drill at all, so it
+  // is settled before the source list is read. A bot can only see chats it was added to, and
+  // nobody adds your bot to their call group — so relaying is not misconfigured on this path,
+  // it is impossible. Left to fall through, it surfaces as a missing sources file and a
+  // `dialogs` command that needs the very account credential the bot exists to avoid.
+  if (config.botToken) {
+    return fail(
+      'this drill exercises relaying, which a bot cannot do — it only sees chats it was added to.',
+      'preview a call with `npm run call -- <address>`, and publish one by typing /signal in the channel',
+    );
+  }
+  if (!config.session) {
+    return fail('TG_SESSION is empty.', 'run `npm run setup` and choose the account option — it writes the session for you');
+  }
+
+  let sources: Source[];
+  try {
     sources = loadSources();
   } catch (err) {
     return fail(reason(err));
   }
-  if (!config.session) return fail('TG_SESSION is empty.', 'run `npm run login`, then paste it into .env');
 
   // Everything below this point costs a network round trip, so the message is proven against
   // the parser and the screen first. If the drill call no longer reads as a clean call, that

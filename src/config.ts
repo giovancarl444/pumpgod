@@ -133,12 +133,24 @@ export function loadSocial(): SocialConfig {
  */
 export function loadConfig(): AppConfig {
   const botToken = process.env.TG_BOT_TOKEN?.trim() ?? '';
+  const session = process.env.TG_SESSION?.trim() ?? '';
+
+  // Holding neither is the fresh-clone state, and it needs saying as a choice between the two.
+  // Left to `required` below, the first value that happens to be missing is TG_API_ID, so the
+  // one message anybody sees before setting anything up sends them to my.telegram.org for a
+  // developer app and a code to their phone — the half the bot path exists to make optional.
+  if (!botToken && !session) {
+    throw new Error(
+      'No Telegram credentials. Run `npm run setup` — a bot token publishes your calls in about a minute, ' +
+        'and a user account additionally reads other groups so they can be scored.',
+    );
+  }
 
   return {
     ...loadPresentation(),
     apiId: botToken ? Number(process.env.TG_API_ID ?? 0) : Number(required('TG_API_ID')),
     apiHash: botToken ? (process.env.TG_API_HASH?.trim() ?? '') : required('TG_API_HASH'),
-    session: process.env.TG_SESSION?.trim() ?? '',
+    session,
     botToken,
     channel: process.env.PUMPGOD_CHANNEL?.trim() ?? '',
     warRoom: process.env.WAR_ROOM_CHAT?.trim() || undefined,
