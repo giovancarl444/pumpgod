@@ -59,6 +59,7 @@ function signalFixture(): Signal {
     confirmations: ['soaps'],
     ageSec: 0,
     stale: false,
+    risk: { level: 'clear', flags: [] },
     timings: { messageUnix: 0, recvAt: 0, parsedAt: 1, wallClockMs: 0 },
     call: {
       token: {

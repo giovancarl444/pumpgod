@@ -48,6 +48,27 @@ group loses trust — so **anything older than `MAX_CALL_AGE_SEC` (default 90s) 
 auto-fires**, whatever the source's mode. It goes to the war room labelled `NOT fresh` with
 its real age, and a human decides.
 
+## Not calling garbage
+
+Speed is worth nothing if it is spent arriving first at a rug. Every call is screened before
+it is published, for whether it can be *exited* — never for whether it will run:
+
+| Flag | What it catches |
+|---|---|
+| `dead` / `thin` | Pool too small to sell into, whatever the chart says |
+| `ratio` | Market cap standing on almost no liquidity — the price is unbacked |
+| `churn` | 24h volume far beyond what the pool can honestly support |
+| `late` | Market cap already ran past what the source quoted; you would be their exit |
+| `weak-parse` | The address came from a chart link, not a labelled `CA:` |
+
+A `danger` read is treated exactly like staleness: **it never auto-fires**, however the source
+is configured. It goes to the war room marked `HELD BACK` with the numbers spelled out.
+
+This is free. The whole screen is arithmetic on numbers already in hand — about **40ns**,
+against a 7µs parse and a 40–200ms network hop — so it costs nothing that speed would miss. It
+runs a second time on real DexScreener data once enrichment lands, which is what catches a
+call that already ran, and the public message is edited to say so.
+
 ## Setup
 
 ```bash
@@ -150,7 +171,7 @@ which is why this is a TypeScript codebase.
 src/
   parse/      address extraction, chain inference, stat fields — pure and synchronous
   telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler
-  pipeline/   routing, dedupe, enrichment
+  pipeline/   routing, dedupe, enrichment, tradability screen
   format/     message rendering
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)

@@ -48,6 +48,21 @@ export interface ParsedCall {
   candidates: TokenRef[];
 }
 
+export type RiskLevel = 'clear' | 'caution' | 'danger';
+
+export interface RiskFlag {
+  code: 'dead' | 'thin' | 'ratio' | 'churn' | 'late' | 'weak-parse';
+  /** Rendered to a human who has about a second to decide, so it states the number. */
+  detail: string;
+  level: 'caution' | 'danger';
+}
+
+/** Whether a call is tradable. Deliberately says nothing about whether it will run. */
+export interface RiskRead {
+  level: RiskLevel;
+  flags: RiskFlag[];
+}
+
 export type SourceMode =
   /** Fire straight to the public channel with zero human input. Fastest path. */
   | 'auto'
@@ -105,4 +120,6 @@ export interface Signal {
   ageSec: number;
   /** Too old to auto-fire; must be reviewed by a human however the source is configured. */
   stale: boolean;
+  /** Tradability screen. Recomputed on real market data once enrichment lands. */
+  risk: RiskRead;
 }

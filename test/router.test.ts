@@ -203,6 +203,20 @@ describe('Router', () => {
     expect(sent[0]!.peer).toBe(CHANNEL);
   });
 
+  it('holds back an untradable call even from an auto source', async () => {
+    const { router, sent } = harness();
+    // $2M market cap standing on a $9K pool — the chart is real, the exit is not.
+    const unbacked =
+      'Rugpull Inc | RUG\nCA: 0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90\n📊 Market Cap: $2.00M 💧 Liquidity: $9.00K';
+
+    router.handleMessage(incoming(source('auto'), unbacked));
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.peer).toBe(WAR_ROOM);
+    expect(sent[0]!.text).toContain('HELD BACK');
+  });
+
   it('ignores a reaction on a message it never staged', async () => {
     const { router, sent } = harness();
     router.handleReaction({ chatId: 'war', messageId: 999, emoji: '🚀', recvAt: performance.now() });

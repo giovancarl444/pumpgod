@@ -44,6 +44,19 @@ function contextLine(signal: Signal): string {
 }
 
 /**
+ * Public calls get one summary line, because a wall of caveats trains people to skip them.
+ * The war room gets every flag spelled out — that reader is deciding, not browsing.
+ */
+function riskLine(signal: Signal, verbose: boolean): string | undefined {
+  const { level, flags } = signal.risk;
+  if (level === 'clear' || !flags.length) return undefined;
+
+  const icon = level === 'danger' ? '🚨' : '⚠️';
+  if (verbose) return flags.map((f) => `${f.level === 'danger' ? '🚨' : '⚠️'} ${escapeHtml(f.detail)}`).join('\n');
+  return `${icon} <b>${escapeHtml(flags[0]!.detail)}</b>`;
+}
+
+/**
  * Inline anchors rather than an inline keyboard: reply markup is bot-only, and pumpgod
  * posts from a user account so it can also read the groups it tracks.
  */
@@ -68,12 +81,24 @@ export function renderPublicCall(signal: Signal, opts: { footer: string; showSou
   const stats = statLine(signal);
   if (stats) lines.push('', stats);
   lines.push(contextLine(signal));
+
+  const risk = riskLine(signal, false);
+  if (risk) lines.push('', risk);
+
   lines.push('', linkLine(signal));
 
   if (opts.showSource) lines.push(`<i>via ${escapeHtml(signal.source.label)}</i>`);
   if (opts.footer) lines.push('', `<i>${escapeHtml(opts.footer)}</i>`);
 
   return lines.join('\n');
+}
+
+/** The first line answers "why is this in front of me", which is not always the source's mode. */
+function warRoomHeading(signal: Signal): string {
+  const who = `<b>${escapeHtml(signal.source.label)}</b>`;
+  if (signal.stale) return `⏳ ${who} · posted ${signal.ageSec}s ago, NOT fresh`;
+  if (signal.risk.level === 'danger' && signal.source.mode === 'auto') return `🚨 ${who} · auto source, HELD BACK`;
+  return `🔎 ${who} · ${signal.source.mode}`;
 }
 
 /**
@@ -85,9 +110,7 @@ export function renderWarRoomCall(signal: Signal): string {
   const detectMs = signal.timings.parsedAt ? signal.timings.parsedAt - signal.timings.recvAt : undefined;
 
   const lines = [
-    signal.stale
-      ? `⏳ <b>${escapeHtml(signal.source.label)}</b> · posted ${signal.ageSec}s ago, NOT fresh`
-      : `🔎 <b>${escapeHtml(signal.source.label)}</b> · ${signal.source.mode}`,
+    warRoomHeading(signal),
     '',
     heading(signal),
     `<code>${escapeHtml(token.address)}</code>`,
@@ -96,6 +119,10 @@ export function renderWarRoomCall(signal: Signal): string {
   const s = statLine(signal);
   if (s) lines.push('', s);
   lines.push(contextLine(signal));
+
+  const risk = riskLine(signal, true);
+  if (risk) lines.push('', risk);
+
   lines.push('', linkLine(signal));
 
   const detail = [`${token.origin} ${Math.round(token.confidence * 100)}%`];

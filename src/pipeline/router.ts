@@ -7,6 +7,7 @@ import { editFast, sendFast } from '../telegram/send';
 import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
+import { assess } from './risk';
 import { record } from '../metrics/latency';
 import { journal } from '../store/journal';
 import { Tracker } from '../track/tracker';
@@ -67,6 +68,9 @@ export class Router {
       confirmations: entry.sources,
       ageSec,
       stale: ageSec > this.config.maxCallAgeSec,
+      // Pure arithmetic on numbers the source already gave us — sub-microsecond, so it can
+      // gate the publish. Re-read against real market data in `upgrade`.
+      risk: assess(call),
       timings: {
         messageUnix: incoming.messageUnix,
         recvAt: incoming.recvAt,
@@ -90,13 +94,18 @@ export class Router {
       return;
     }
 
-    // A stale call is one we recovered after an outage, or one we were too slow to see.
-    // Publishing it as if it were fresh is how a call group loses trust, so it always
-    // goes to a human regardless of how the source is configured.
-    if (incoming.source.mode === 'auto' && !signal.stale) {
+    // Two things override a source's mode, both for the same reason: publishing them as
+    // ordinary calls is how a call group loses trust. A stale call is one we recovered after
+    // an outage or were too slow to see. A dangerous one is untradable — no exit liquidity,
+    // an unbacked price, or a move that already happened. Neither is auto-published.
+    const divert = signal.stale || signal.risk.level === 'danger';
+    if (incoming.source.mode === 'auto' && !divert) {
       void this.fire(signal);
     } else {
       if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
+      if (signal.risk.level === 'danger') {
+        log.warn(`⚠️  ${label(signal)} — ${signal.risk.flags.map((f) => f.detail).join('; ')}`);
+      }
       void this.stage(signal);
     }
   }
@@ -159,6 +168,13 @@ export class Router {
     const enriched: Signal = { ...signal, call: { ...signal.call, ...extra } };
     enriched.timings.enrichedAt = performance.now();
     record('enrich', enriched.timings.enrichedAt - signal.timings.recvAt);
+
+    // The pre-publish screen only had the source's own numbers. This one has the market's,
+    // and can compare the two — which is what catches a call that already ran.
+    enriched.risk = assess(enriched.call, signal.call.stats.marketCapUsd);
+    if (enriched.risk.level === 'danger') {
+      log.warn(`⚠️  published ${label(signal)} then found: ${enriched.risk.flags.map((f) => f.detail).join('; ')}`);
+    }
 
     try {
       await editFast(
@@ -236,6 +252,8 @@ export class Router {
       origin: signal.call.token.origin,
       confidence: signal.call.token.confidence,
       marketCapUsd: signal.call.stats.marketCapUsd,
+      risk: signal.risk.level,
+      riskFlags: signal.risk.flags.map((f) => f.code),
       confirmations: signal.confirmations,
       parseMs: signal.timings.parsedAt ? signal.timings.parsedAt - signal.timings.recvAt : undefined,
       ackMs: signal.timings.ackAt ? signal.timings.ackAt - signal.timings.recvAt : undefined,
