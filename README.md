@@ -151,6 +151,24 @@ actually published.
 
 That table is the promotion rule: `shadow` → `review` → `auto` on the numbers, not on vibes.
 
+## Making money from it
+
+Trading terminals attribute a referral when someone **signs up** through your link, then pay a
+share of that person's fees for as long as they trade. So the revenue does not come from
+decorating each Buy button — it comes from one link being read on every call, by people who
+are already about to buy something.
+
+`REFERRAL_URL` is rendered once per public call, above the footer. `TRADE_URL_SOL` and
+`TRADE_URL_EVM` are templates (`{address}`, `{chain}`) so the Buy button deep-links into
+whichever terminal you actually use. Both live in `.env`, never in the repo.
+
+Taking a cut of trades directly — an in-Telegram buy button with a wallet pumpgod controls —
+earns more per user, but it means holding other people's keys. That is a custody product with
+a custody product's failure mode, and a different legal posture, and it should not be built
+before there is an audience to justify it. The non-custodial version (the user signs in their
+own wallet, a fee instruction rides along in the transaction) gets most of the revenue with
+none of the custody, and is the right shape when the time comes.
+
 ## Roadmap
 
 **Phase 1 (this)** — track groups, relay what we like, measure everything.

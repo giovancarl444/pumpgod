@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Api } from 'telegram';
 import { parseHtml } from '../src/telegram/html';
-import { renderPublicCall } from '../src/format/call';
+import { renderPublicCall, type RenderOptions } from '../src/format/call';
 import type { Signal } from '../src/types';
 
 describe('parseHtml', () => {
@@ -78,9 +78,20 @@ function signalFixture(): Signal {
   };
 }
 
+function opts(over: Partial<RenderOptions> = {}): RenderOptions {
+  return {
+    footer: 'NFA · DYOR',
+    showSource: false,
+    tradeUrlSol: 'https://axiom.trade/t/{address}',
+    tradeUrlEvm: '',
+    referralLabel: 'Trade these faster',
+    ...over,
+  };
+}
+
 describe('renderPublicCall', () => {
   it('produces a message whose entities line up with the rendered text', () => {
-    const html = renderPublicCall(signalFixture(), { footer: 'NFA · DYOR', showSource: false });
+    const html = renderPublicCall(signalFixture(), opts());
     const { text, entities } = parseHtml(html);
 
     expect(text).toContain('PUMPGOD CALL');
@@ -101,9 +112,16 @@ describe('renderPublicCall', () => {
   });
 
   it('hides the source group unless explicitly enabled', () => {
-    const hidden = renderPublicCall(signalFixture(), { footer: '', showSource: false });
+    const hidden = renderPublicCall(signalFixture(), opts({ footer: '' }));
     expect(hidden).not.toContain('Soaps Gems');
-    const shown = renderPublicCall(signalFixture(), { footer: '', showSource: true });
+    const shown = renderPublicCall(signalFixture(), opts({ footer: '', showSource: true }));
     expect(shown).toContain('Soaps Gems');
+  });
+
+  it('carries the referral link only when one is configured', () => {
+    expect(renderPublicCall(signalFixture(), opts())).not.toContain('href="https://axiom.trade/@');
+    const withRef = renderPublicCall(signalFixture(), opts({ referralUrl: 'https://axiom.trade/@pumpgod' }));
+    expect(withRef).toContain('https://axiom.trade/@pumpgod');
+    expect(withRef).toContain('Trade these faster');
   });
 });

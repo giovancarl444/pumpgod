@@ -1,6 +1,15 @@
 import type { Signal } from '../types';
 import { chainLabel, dexScreenerUrl, explorerUrl, tradeUrl } from '../parse/chains';
 
+export interface RenderOptions {
+  footer: string;
+  showSource: boolean;
+  tradeUrlSol: string;
+  tradeUrlEvm: string;
+  referralUrl?: string;
+  referralLabel: string;
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -60,17 +69,17 @@ function riskLine(signal: Signal, verbose: boolean): string | undefined {
  * Inline anchors rather than an inline keyboard: reply markup is bot-only, and pumpgod
  * posts from a user account so it can also read the groups it tracks.
  */
-function linkLine(signal: Signal): string {
+function linkLine(signal: Signal, opts: RenderOptions): string {
   const { token, pairAddress } = signal.call;
   const links = [
     `<a href="${dexScreenerUrl(token.chain, pairAddress, token.address)}">Chart</a>`,
-    `<a href="${tradeUrl(token.chain, token.address)}">Buy</a>`,
+    `<a href="${tradeUrl(token.chain, token.address, { sol: opts.tradeUrlSol, evm: opts.tradeUrlEvm })}">Buy</a>`,
     `<a href="${explorerUrl(token.chain, token.address)}">Scan</a>`,
   ];
   return links.join(' · ');
 }
 
-export function renderPublicCall(signal: Signal, opts: { footer: string; showSource: boolean }): string {
+export function renderPublicCall(signal: Signal, opts: RenderOptions): string {
   const lines = [
     '⚡ <b>PUMPGOD CALL</b>',
     '',
@@ -85,9 +94,15 @@ export function renderPublicCall(signal: Signal, opts: { footer: string; showSou
   const risk = riskLine(signal, false);
   if (risk) lines.push('', risk);
 
-  lines.push('', linkLine(signal));
+  lines.push('', linkLine(signal, opts));
 
   if (opts.showSource) lines.push(`<i>via ${escapeHtml(signal.source.label)}</i>`);
+
+  // These terminals attribute referrals at signup, not per trade, so the money is made by
+  // the link that gets read every call — not by decorating each Buy button.
+  if (opts.referralUrl) {
+    lines.push('', `⚡ <a href="${opts.referralUrl}">${escapeHtml(opts.referralLabel)}</a>`);
+  }
   if (opts.footer) lines.push('', `<i>${escapeHtml(opts.footer)}</i>`);
 
   return lines.join('\n');
@@ -105,7 +120,7 @@ function warRoomHeading(signal: Signal): string {
  * The war-room card optimises for a one-second decision: what it is, how far we trust
  * the parse, and how fast we saw it. Approval happens by reacting to this message.
  */
-export function renderWarRoomCall(signal: Signal): string {
+export function renderWarRoomCall(signal: Signal, opts: RenderOptions): string {
   const { token, stats } = signal.call;
   const detectMs = signal.timings.parsedAt ? signal.timings.parsedAt - signal.timings.recvAt : undefined;
 
@@ -123,7 +138,7 @@ export function renderWarRoomCall(signal: Signal): string {
   const risk = riskLine(signal, true);
   if (risk) lines.push('', risk);
 
-  lines.push('', linkLine(signal));
+  lines.push('', linkLine(signal, opts));
 
   const detail = [`${token.origin} ${Math.round(token.confidence * 100)}%`];
   if (detectMs !== undefined) detail.push(`parsed ${detectMs.toFixed(2)}ms`);

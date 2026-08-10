@@ -51,6 +51,12 @@ export interface AppConfig {
   maxCallAgeSec: number;
   catchupIntervalMs: number;
   trackIntervalMs: number;
+  /** Buy-button templates, `{address}` substituted. Blank falls back to a DexScreener search. */
+  tradeUrlSol: string;
+  tradeUrlEvm: string;
+  /** Signup referral link and its call-to-action, rendered once per public call. */
+  referralUrl?: string;
+  referralLabel: string;
 }
 
 export function loadConfig(): AppConfig {
@@ -70,6 +76,10 @@ export function loadConfig(): AppConfig {
     maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
     catchupIntervalMs: num('CATCHUP_INTERVAL_SEC', 60) * 1000,
     trackIntervalMs: num('TRACK_INTERVAL_SEC', 60) * 1000,
+    tradeUrlSol: process.env.TRADE_URL_SOL?.trim() || 'https://axiom.trade/t/{address}',
+    tradeUrlEvm: process.env.TRADE_URL_EVM?.trim() ?? '',
+    referralUrl: process.env.REFERRAL_URL?.trim() || undefined,
+    referralLabel: process.env.REFERRAL_LABEL?.trim() || 'Trade these faster',
   };
 }
 

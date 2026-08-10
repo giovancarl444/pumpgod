@@ -78,10 +78,17 @@ export function dexScreenerUrl(chain: Chain, pairAddress: string | undefined, to
   return `https://dexscreener.com/search?q=${tokenAddress}`;
 }
 
-/** Deep link into a trading bot/terminal, so the channel can act in one tap. */
-export function tradeUrl(chain: Chain, address: string): string {
-  if (chain === 'solana') return `https://axiom.trade/t/${address}`;
-  return `https://dexscreener.com/search?q=${address}`;
+/**
+ * Deep link into a trading terminal so the channel can act in one tap. Templated rather than
+ * hardcoded because the right terminal differs by chain and by who is running the channel —
+ * and because a referral-bearing link belongs in `.env`, not committed to a public repo.
+ */
+export function tradeUrl(chain: Chain, address: string, templates: { sol: string; evm: string }): string {
+  const template = chain === 'solana' ? templates.sol : templates.evm;
+  if (!template) return `https://dexscreener.com/search?q=${address}`;
+  // Addresses are base58 or hex by the time they get here, so encoding is a no-op that
+  // stays correct if the address rules ever loosen.
+  return template.replace('{address}', encodeURIComponent(address)).replace('{chain}', chain);
 }
 
 export function chainLabel(chain: Chain): string {

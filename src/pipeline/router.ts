@@ -132,10 +132,7 @@ export class Router {
     }
 
     try {
-      const html = renderPublicCall(signal, {
-        footer: this.config.footer,
-        showSource: this.config.showSource,
-      });
+      const html = renderPublicCall(signal, this.config);
       const sent = await sendFast(this.client, this.channelPeer, html, { stage: 'send.public' });
 
       signal.timings.dispatchAt = sent.dispatchAt;
@@ -181,7 +178,7 @@ export class Router {
         this.client,
         this.channelPeer,
         messageId,
-        renderPublicCall(enriched, { footer: this.config.footer, showSource: this.config.showSource }),
+        renderPublicCall(enriched, this.config),
       );
     } catch (err) {
       log.debug('enrich edit skipped', (err as Error).message);
@@ -195,7 +192,7 @@ export class Router {
     }
 
     try {
-      const sent = await sendFast(this.client, this.warRoomPeer, renderWarRoomCall(signal), {
+      const sent = await sendFast(this.client, this.warRoomPeer, renderWarRoomCall(signal, this.config), {
         stage: 'send.warroom',
       });
       if (sent.messageId) this.staged.set(sent.messageId, { signal, stagedAt: Date.now(), fired: false });

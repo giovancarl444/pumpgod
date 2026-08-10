@@ -52,6 +52,9 @@ function harness(overrides: Partial<AppConfig> = {}) {
     maxCallAgeSec: 90,
     catchupIntervalMs: 60_000,
     trackIntervalMs: 60_000,
+    tradeUrlSol: 'https://axiom.trade/t/{address}',
+    tradeUrlEvm: '',
+    referralLabel: 'Trade these faster',
     ...overrides,
   };
 
