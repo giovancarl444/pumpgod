@@ -246,6 +246,28 @@ export function loadSocial(): SocialConfig {
 }
 
 /**
+ * Chains the shadow scraper will record — every chain by default, whatever `CHAINS` says.
+ *
+ * These look like the same setting and are not. `CHAINS` answers "what are we willing to put
+ * our name on", which is a decision about risk. This answers "what are we willing to look at",
+ * which is a question about the world, and the two only coincided by accident because one
+ * config value was reachable from both places.
+ *
+ * Nothing recorded here can be published — `shadow.ts` holds no transport and writes only the
+ * `shadow` outcome — so narrowing it buys no safety at all. What it costs is real: on a live
+ * pass, 23 of 70 rival calls were bsc or Robinhood, so `CHAINS=solana` would have scored those
+ * channels on a third less of their output than they actually produced, and scored a channel
+ * that mostly calls Robinhood clones on almost none of it. A scorecard built from a biased
+ * sample is worse than no scorecard, because it looks like an answer.
+ *
+ * Collect wide, filter narrow: what was never recorded cannot be reconsidered later, and the
+ * per-chain split is still there to filter on when deciding who to actually copy.
+ */
+export function loadShadowChains(): Chain[] {
+  return chainList('SHADOW_CHAINS', []);
+}
+
+/**
  * Whether the agent may post into the channel unprompted.
  *
  * Off by default, and more emphatically than the other flags here. Everything else the agent

@@ -1,4 +1,4 @@
-import { loadConfig, loadWatchlist } from '../src/config';
+import { loadShadowChains, loadWatchlist } from '../src/config';
 import { shadowPass, type HandleResult } from '../src/pipeline/shadow';
 import { Watched } from '../src/store/watched';
 import { Tracker } from '../src/track/tracker';
@@ -41,10 +41,12 @@ function line(r: HandleResult): string {
 }
 
 async function pass(handles: string[], tracker: Tracker, seen: Watched): Promise<void> {
-  const config = loadConfig();
   const started = Date.now();
 
-  const results = await shadowPass({ handles, tracker, seen, chains: config.chains });
+  // Not `config.chains`. That setting is about what we are willing to publish; this is about
+  // what we are willing to measure, and nothing recorded here can be published. See
+  // `loadShadowChains`.
+  const results = await shadowPass({ handles, tracker, seen, chains: loadShadowChains() });
 
   const recorded = results.reduce((n, r) => n + r.recorded, 0);
   const fresh = results.reduce((n, r) => n + r.fresh, 0);
