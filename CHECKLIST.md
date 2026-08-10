@@ -115,13 +115,46 @@ card lands looking like an advert and that `npm run scoreboard` does **not** cou
 
 ---
 
+## To open the call competition
+
+Also written and off (`COMP_ENABLED=false`). This is the growth loop: members DM `/submit
+<address>`, the same tracker prices their pick, and `/leaderboard` ranks them on median peak.
+Nothing a member submits can reach the channel — that is enforced three separate ways in code
+and has its own tests.
+
+### 11. Decide what winning is worth
+
+A leaderboard is not a competition. People will enter a table that costs them nothing exactly
+once, and then stop, unless being top of it gets them something.
+
+It does not have to be money — first call of the day published under their handle, a role,
+a cut of a promo slot, anything scarce. But it has to be *stated*, and it has to be settled on
+a schedule (weekly is the obvious one) or the table has no clock and no drama.
+
+**Do:** decide the prize and the period before turning it on. Changing the rules after people
+have picks on the board is the one thing that kills it.
+
+### 12. Test it on yourself, then announce it
+
+Nobody submits to a bot they don't know accepts submissions, and `/submit` is invisible until
+someone says it exists.
+
+**Do:** with `COMP_ENABLED=true`, DM the bot `/submit <a real Solana address>` and confirm you
+get a confirmation with the entry market cap, that `/me` shows the pick, and that `npm run
+scoreboard` does **not** count it. Then announce it in the channel with the rules from step 11.
+
+Worth saying in the announcement that picks are private and only the leaderboard is public —
+people are far more willing to enter when a bad pick isn't posted under their name.
+
+---
+
 ## To unlock watching rival groups
 
 This is the biggest unlock in the whole plan and it is blocked entirely on you. A bot can
 only see chats an admin **added** it to. That is a Telegram platform rule, not something in
 our code, so pumpgod can never read a rival group from the bot account.
 
-### 11. Log in a reader account
+### 13. Log in a reader account
 
 **Do:** `npm run login`, on a **separate Telegram account** — not the bot, not your personal
 one. That account joins rival groups and is the one that eventually gets banned. The bot owns
@@ -130,12 +163,12 @@ the channel and has to stay clean, which is why they must never be the same acco
 Type the phone number into the prompt yourself. Never paste it into a command for me to run —
 that sends a real SMS to a real phone.
 
-### 12. List the groups to watch
+### 14. List the groups to watch
 
 **Do:** fill `config/sources.json` with the rival groups, **every one of them in
 `"mode": "shadow"`**. Shadow records what a group would have made us and publishes nothing.
 
-### 13. Wait, then promote on the numbers
+### 15. Wait, then promote on the numbers
 
 **Do:** after ~20 calls from a source, run `npm run scorecard`. It ranks each group on median
 peak multiple, hit rate and rug rate. Move the ones that earn it to `review`, and only the

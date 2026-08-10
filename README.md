@@ -400,6 +400,50 @@ the **access token pair must be regenerated after granting Read AND Write** or p
 with a 403. Leave them blank and the feed stays off while `npm run recap` still previews it.
 Posting also requires `LIVE=true`, so nothing goes public by accident.
 
+### The call competition
+
+A record only we can add to is a broadcast. `COMP_ENABLED` turns it into a competition: a member
+DMs the bot `/submit <address>` and their pick is priced by the same tracker, on the same
+schedule, against the same candles as ours. `/leaderboard` ranks everyone; `/me` shows one member
+their own record.
+
+```
+  🏆 call competition
+
+  🥇 @alice — 3.10x median (7 picks · best 12.4x)
+  🥈 @bob — 1.80x median (9 picks · best 4.10x)
+  🥉 @carol — 1.20x median (5 picks · best 2.30x)
+
+  still qualifying (5 priced picks needed): @dave 2/5 · @erin 1/5
+
+  Median peak over every pick, wins and losses. One pick a day.
+  Picks are never posted in the channel. Updated 21:40.
+```
+
+Ranked on **median peak with a minimum sample**, never on best pick. A table topped by whoever
+got luckiest once never changes again, and everyone below the winner correctly stops trying. The
+minimum sample (`COMP_MIN_SAMPLE`, default 5) sorts anyone thinner to the bottom and names them as
+still qualifying rather than hiding them, so the table can never be won by submitting on the day
+the market ran. `COMP_PICKS_PER_DAY` is 1 for the same reason: at one pick a day the board
+measures judgement, above it the board measures who submits the most.
+
+A member's pick is **measured and never published**, and three separate things say so, because
+one forgotten check should not be able to put an unvetted coin under our name:
+
+- its own source id (`member:<userId>`), so a member's pick and a call of ours on the same coin
+  stay two rows — which of us was earlier is the only interesting question, and a merged record
+  cannot answer it;
+- a `member` outcome, which `isPublished()` rejects, so it reaches neither the scoreboard, the X
+  feed nor the milestone replies;
+- a rank *above* `called`, so the outcome is sticky — even a code path that explicitly tries to
+  record a member's pick as a call leaves it a member's pick. There is a test that does exactly
+  that.
+
+Submissions are DM-only, and the DM router is a separate module that holds no reference to the
+signal path at all: `/signal` typed into a DM has no route to the channel by construction rather
+than by a check. Only a `@username` is ever stored — Telegram's `first_name` is free text the
+member chooses, and the leaderboard is rendered as HTML in a public channel.
+
 ## Making money from it
 
 Trading terminals attribute a referral when someone **signs up** through your link, then pay a
@@ -465,14 +509,16 @@ promoted to `review` or `auto`. Blocked on a login; see [CHECKLIST.md](CHECKLIST
 call, and a DM surface sells a clearly-marked promotion slot for Stars that is structurally
 barred from the track record.
 
-**Then — the rest of the interactive surface.** `callback_query`, which nothing here answers
-yet: buttons currently only carry links. Needed on its own merits, and a prerequisite for the
-one after it.
+**Done — member calls.** Members submit picks by DM, priced by the same tracker on the same
+schedule, ranked on median peak with a minimum sample. Turns lurkers into competitors and gives
+people who never call anything a reason to stay. A member's pick can never reach the public feed:
+`isPublished()` is the single gate, and the outcome ranks above `called` so nothing can upgrade
+one into a call of ours.
 
-**Then — member calls.** Members submit picks by DM, tracked privately in the same tracker,
-ranked on median peak with a minimum sample. Turns lurkers into competitors and gives people
-who never call anything a reason to stay. Member picks can never reach the public feed —
-`isPublished()` is the single gate and it stays that way.
+**Then — the rest of the interactive surface.** `callback_query`, which nothing here answers
+yet: buttons currently only carry links. It was planned as the prerequisite for the competition
+and turned out not to be one — the real blocker was DMs being dropped on ingest, and that is
+open. So this is now wanted on its own merits: one tap to enter a pick beats typing an address.
 
 **Then — distribution.** X media cards, then TikTok recap videos rendered straight from
 `data/tracked.json`, which already holds the entry, the peak and how long the run took.
@@ -485,12 +531,13 @@ a machine for amplifying proof, so it comes after there is proof.
 
 ```
 src/
-  parse/      address extraction, chain inference, stat fields — pure and synchronous
-  telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler
-  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls, paid slots
+  parse/      address extraction, chain inference, stat fields, DM verbs — pure and synchronous
+  telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler, Stars
+  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls, DMs, paid slots,
+              member picks
   format/     message rendering
   metrics/    latency histograms
-  store/      journal (buffered, off the hot path); promo orders (on disk, because money)
+  store/      journal (buffered, off the hot path); promo orders and members (on disk)
   track/      outcome tracking — entry, peak, milestones, rugs; and what it all adds up to
   social/     the record, published — X feed, in-channel milestone replies, pinned scoreboard
 scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap, scoreboard
