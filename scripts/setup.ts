@@ -6,6 +6,7 @@ import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { config as loadEnv } from 'dotenv';
 import { normalisePeerId } from '../src/config';
+import { BotApi, botRights, chatIdFor, type BotChat, type ChatMember } from '../src/telegram/botapi';
 
 /**
  * Everything between a fresh clone and a working `/signal`, in one command.
@@ -52,6 +53,101 @@ async function askUntilAnswered(rl: Interface, question: string): Promise<string
     const answer = (await rl.question(question)).trim();
     if (answer) return answer;
     console.log('  (that cannot be blank)');
+  }
+}
+
+type Mode = 'bot' | 'account';
+
+/**
+ * Which of the two credentials this run is filling in.
+ *
+ * They are not a pair and not a ladder — a bot publishes and can never read a rival group, an
+ * account can read and is bannable. Most people want the bot: it is a token pasted from a
+ * chat window versus a developer app and a login code, and it is the half that has to work
+ * before anything can be published at all.
+ */
+async function chooseMode(rl: Interface): Promise<Mode> {
+  if (!missing('TG_BOT_TOKEN')) return 'bot';
+  if (!missing('TG_SESSION')) return 'account';
+
+  console.log('  Two ways to connect, and they do different jobs.\n');
+  console.log('    1. A bot          publishes your calls. No phone number, nothing tied to your');
+  console.log('                      own account. About a minute.  ← start here');
+  console.log('    2. Your account   also reads other groups, which is the only way to score them.');
+  console.log('                      Needs my.telegram.org and a code sent to your phone.\n');
+
+  const answer = (await rl.question('  Number [1]: ')).trim();
+  return answer === '2' ? 'account' : 'bot';
+}
+
+/**
+ * Naming a chat to a bot, which has no dialog list to pick from — it can only be told, and it
+ * can only see chats it was added to. So the answer is typed, and then proven: `getChat` says
+ * whether it can see the chat at all, `getChatMember` says whether it may publish there. Both
+ * failures are worth catching here rather than at the first real call.
+ */
+async function askChat(
+  rl: Interface,
+  api: BotApi,
+  botId: number,
+  prompt: string,
+  optional = false,
+): Promise<string | undefined> {
+  for (;;) {
+    const answer = (await rl.question(prompt)).trim();
+    if (!answer) {
+      if (optional) return undefined;
+      console.log('  (that cannot be blank)');
+      continue;
+    }
+
+    try {
+      const chat = await api.call<BotChat>('getChat', { chat_id: chatIdFor(answer) });
+      const member = await api.call<ChatMember>('getChatMember', { chat_id: chat.id, user_id: botId });
+      const rights = botRights(chat.type, member);
+      console.log(`  ${rights.ok ? '✓' : '⚠'} ${chat.title ?? answer} · ${rights.detail}`);
+      if (rights.hint) console.log(`    └ ${rights.hint}`);
+      // Stored as the numeric id: it is what every reply comes tagged with, and unlike a
+      // @username it survives the channel being renamed.
+      return String(chat.id);
+    } catch (err) {
+      console.log(`  ✗ ${(err as Error).message}`);
+      console.log('    └ add the bot to that chat first, as an admin — then paste it again');
+      console.log('      (or press enter to skip, and set it in .env by hand later)');
+      if (optional) return undefined;
+    }
+  }
+}
+
+/**
+ * The bot half of setup. No source list is offered, and there is nothing missing: a bot cannot
+ * join a group on its own, so it will never see a rival's calls however this is configured.
+ */
+async function botSetup(rl: Interface): Promise<void> {
+  if (missing('TG_BOT_TOKEN')) {
+    console.log('\n  In Telegram, message @BotFather and send /newbot. It asks for a name and a');
+    console.log('  username, then gives you a token like 8123456789:AAH… — paste that here.\n');
+    console.log('  Written straight to .env, which is gitignored. Anyone holding it owns the bot.\n');
+    setEnv('TG_BOT_TOKEN', await askUntilAnswered(rl, '  Bot token: '));
+  }
+
+  const api = new BotApi(process.env.TG_BOT_TOKEN!);
+  const me = await api.call<{ id: number; username?: string }>('getMe');
+  const handle = me.username ? `@${me.username}` : 'your bot';
+  console.log(`\n  ✓ that token is ${handle}\n`);
+
+  if (missing('PUMPGOD_CHANNEL')) {
+    console.log(`  Where do calls get published? Add ${handle} to that channel as an admin first`);
+    console.log('  — a bot cannot join anything by itself, and cannot see a chat it is not in.\n');
+    const picked = await askChat(rl, api, me.id, '  Channel @username or -100… id: ');
+    if (picked) setEnv('PUMPGOD_CHANNEL', picked);
+  }
+
+  if (missing('WAR_ROOM_CHAT')) {
+    console.log('\n  And a war room — a private group where risky calls wait for a 🚀 from you');
+    console.log('  instead of going straight out. Optional; press enter to skip.\n');
+    const picked = await askChat(rl, api, me.id, '  War room @username or -100… id: ', true);
+    if (picked) setEnv('WAR_ROOM_CHAT', picked);
   }
 }
 
@@ -307,15 +403,19 @@ async function main() {
     process.exit(1);
   });
 
-  if (missing('TG_API_ID') || missing('TG_API_HASH')) {
-    console.log('  Open https://my.telegram.org → API development tools, and create an app.');
+  const mode = await chooseMode(rl);
+
+  if (mode === 'bot') await botSetup(rl);
+
+  if (mode === 'account' && (missing('TG_API_ID') || missing('TG_API_HASH'))) {
+    console.log('\n  Open https://my.telegram.org → API development tools, and create an app.');
     console.log('  These are for your own account, not a bot: a bot cannot read other groups.\n');
     if (missing('TG_API_ID')) setEnv('TG_API_ID', await askUntilAnswered(rl, '  App api_id: '));
     if (missing('TG_API_HASH')) setEnv('TG_API_HASH', await askUntilAnswered(rl, '  App api_hash: '));
     console.log('');
   }
 
-  if (missing('TG_SESSION')) {
+  if (mode === 'account' && missing('TG_SESSION')) {
     console.log('  Logging in to Telegram. The code goes to your phone, not here.\n');
     await login(rl);
   }
@@ -323,7 +423,7 @@ async function main() {
   // One connection answers both halves: where our calls go, and which rooms we read. The
   // watch list is offered every run rather than only on the first, because it is a list that
   // grows — you join another group, you add it — not a value that gets filled in once.
-  if (!missing('TG_SESSION')) {
+  if (mode === 'account' && !missing('TG_SESSION')) {
     const client = new TelegramClient(
       new StringSession(process.env.TG_SESSION!),
       Number(process.env.TG_API_ID),
@@ -353,7 +453,9 @@ async function main() {
   finished = true;
   rl.close();
 
-  const left = ['TG_API_ID', 'TG_API_HASH', 'TG_SESSION', 'PUMPGOD_CHANNEL'].filter(missing);
+  const needed =
+    mode === 'bot' ? ['TG_BOT_TOKEN', 'PUMPGOD_CHANNEL'] : ['TG_API_ID', 'TG_API_HASH', 'TG_SESSION', 'PUMPGOD_CHANNEL'];
+  const left = needed.filter(missing);
   if (left.length) {
     console.log(`\n  Still missing: ${left.join(', ')}. Re-run \`npm run setup\` to finish.\n`);
     process.exit(1);
@@ -365,7 +467,11 @@ async function main() {
 
   // Worth saying plainly, because it is the one thing here that cannot be caught up on later:
   // a group scores only from the day it is listed.
-  if (!readSources()?.length) {
+  if (mode === 'bot') {
+    console.log('  Nothing is being watched, and a bot cannot be: it only ever sees chats it was');
+    console.log('  added to. To rank other groups, re-run this and pick 2 to add a reading');
+    console.log('  account — the bot keeps the channel, so a ban there cannot take it down.\n');
+  } else if (!readSources()?.length) {
     console.log('  No groups are being watched yet. Join a few call groups on this account and');
     console.log('  re-run `npm run setup` — a group is only scored from the day you add it.\n');
   }

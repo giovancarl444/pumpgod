@@ -89,6 +89,58 @@ export function chatIdFor(target: string): string {
   return Number(t) > 0 ? `-100${t}` : t;
 }
 
+/** The part of `getChatMember` that decides whether we can publish. */
+export interface ChatMember {
+  status: string;
+  can_post_messages?: boolean;
+  can_delete_messages?: boolean;
+}
+
+export interface BotRights {
+  ok: boolean;
+  detail: string;
+  /** One line, and it must say what to actually do in Telegram. */
+  hint?: string;
+  /** Whether a typed `/signal` can be tidied away after the card goes out. */
+  canDelete: boolean;
+}
+
+/**
+ * What the bot may do in a chat it has been added to.
+ *
+ * Worth asking before a call depends on the answer, because the failure is otherwise silent
+ * and late: "administrator" on a broadcast channel is a title that can be handed out with
+ * *no* permissions behind it, and Telegram only mentions the missing post right at the moment
+ * the first real call fails to send.
+ */
+export function botRights(chatType: string, member: ChatMember): BotRights {
+  const kind = chatType === 'channel' ? 'broadcast channel' : chatType === 'private' ? 'private chat' : 'group';
+  const promote = 'add the bot as an admin there, with "Post Messages" ticked';
+
+  if (member.status === 'left' || member.status === 'kicked') {
+    return { ok: false, detail: `${kind} · the bot is not in it`, hint: promote, canDelete: false };
+  }
+  if (member.status === 'creator') return { ok: true, detail: `${kind} · creator`, canDelete: true };
+
+  if (member.status !== 'administrator') {
+    // A plain member can talk in a group, never in a broadcast channel.
+    return chatType === 'channel'
+      ? { ok: false, detail: `${kind} · not an admin, and only admins can post here`, hint: promote, canDelete: false }
+      : { ok: true, detail: `${kind} · member, can post`, canDelete: false };
+  }
+
+  if (member.can_post_messages === false) {
+    return {
+      ok: false,
+      detail: `${kind} · admin, but "Post Messages" is off`,
+      hint: 'open the chat\'s admin list, edit the bot, and tick "Post Messages"',
+      canDelete: false,
+    };
+  }
+
+  return { ok: true, detail: `${kind} · admin, can post`, canDelete: member.can_delete_messages !== false };
+}
+
 /** A bot: publishes anywhere it is an admin, reads nothing it was not added to. */
 export class BotTransport implements Transport {
   readonly kind = 'bot' as const;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Api, TelegramClient } from 'telegram';
 import bigInt from 'big-integer';
-import { credentialChecks, postRights, reactionCheck, signalRights } from '../scripts/doctor';
+import { botReactionCheck, credentialChecks, postRights, reactionCheck, signalRights } from '../scripts/doctor';
 
 /**
  * The doctor only has value if its verdicts are right. Every case here is a real
@@ -203,6 +203,52 @@ describe('reactionCheck', () => {
   });
 });
 
+/**
+ * Approval is a reaction, so anything that stops one being delivered stops review mode dead —
+ * and silently, since a call that is never approved looks exactly like a call nobody wanted.
+ */
+describe('botReactionCheck', () => {
+  const emoji = (...e: string[]) => e.map((x) => ({ type: 'emoji', emoji: x }));
+
+  // No MTProto equivalent, and the reason bot review mode fails in a way nothing reports:
+  // Telegram sends message_reaction updates only to a bot that administers the chat. As an
+  // ordinary member it receives nothing, and every staged call waits forever.
+  it('fails a bot that is only a member of the war room, however reactions are set', () => {
+    const check = botReactionCheck(undefined, { status: 'member' });
+    expect(check.status).toBe('fail');
+    expect(check.hint).toContain('admin');
+  });
+
+  it('passes when every emoji is allowed, which Telegram says by omitting the field', () => {
+    expect(botReactionCheck(undefined, { status: 'administrator' }).status).toBe('ok');
+  });
+
+  it('fails when the war room allows reactions but not one that approves', () => {
+    expect(botReactionCheck(emoji('❤', '😁'), { status: 'administrator' }).status).toBe('fail');
+  });
+
+  // Approval still works, so this is not a blocker — but 👎 is the documented way to skip and
+  // it is not there, so the tap somebody has been told to use does nothing.
+  it('warns when approval works but the skip reaction is missing', () => {
+    const check = botReactionCheck(emoji('🚀'), { status: 'administrator' });
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain('👎');
+  });
+
+  // Any of FIRE approves, not only 🚀 — so a war room that enabled 🔥 and ❌ is workable, and
+  // the check has to name the taps that actually exist there rather than the documented ones.
+  it('names the reactions that do work when the documented pair is missing', () => {
+    const check = botReactionCheck(emoji('🔥', '❌'), { status: 'administrator' });
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain('🔥');
+    expect(check.detail).toContain('❌');
+  });
+
+  it('passes the creator, who needs no explicit rights', () => {
+    expect(botReactionCheck(emoji('🚀', '👎'), { status: 'creator' }).status).toBe('ok');
+  });
+});
+
 // Setting this up is four values in a file, and `loadConfig` throws on the first blank one.
 // Reporting them one per run turns a five-minute job into four rounds of guesswork.
 describe('credentialChecks', () => {
@@ -213,10 +259,25 @@ describe('credentialChecks', () => {
   });
 
   it('names every missing value at once, not just the first', () => {
-    const checks = credentialChecks({});
-    expect(checks.map((c) => c.label)).toEqual(['TG_API_ID', 'TG_API_HASH', 'TG_SESSION']);
+    const checks = credentialChecks({ TG_API_ID: '1' });
+    expect(checks.map((c) => c.label)).toEqual(['TG_API_HASH', 'TG_SESSION']);
     // A missing value is useless without the one place it comes from.
     for (const check of checks) expect(check.hint).toBeTruthy();
+  });
+
+  // A bot token is an alternative to all three, not a fourth value. Listing them anyway would
+  // send someone to my.telegram.org for a login that publishing does not need.
+  it('asks for nothing more once there is a bot token', () => {
+    expect(credentialChecks({ TG_BOT_TOKEN: '123:ABC' })).toHaveLength(0);
+  });
+
+  // A fresh clone has neither, and the MTProto three are the slow way in. Naming them here
+  // would hide the fact that the quick route needs none of them.
+  it('offers both routes when nothing at all is set, rather than only the account one', () => {
+    const checks = credentialChecks({});
+    expect(checks).toHaveLength(1);
+    expect(checks[0]!.hint).toContain('npm run setup');
+    expect(checks[0]!.hint).toContain('bot token');
   });
 
   it('treats a blank value as missing, since dotenv reads one as an empty string', () => {

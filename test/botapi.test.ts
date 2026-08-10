@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BotApi, BotTransport, chatIdFor } from '../src/telegram/botapi';
+import { BotApi, BotTransport, botRights, chatIdFor } from '../src/telegram/botapi';
 
 /**
  * The bot is the half of pumpgod that can publish without a phone number, so it is the half
@@ -134,5 +134,51 @@ describe('sending a card with artwork', () => {
     await transport.sendPhoto(PEER, 'https://cdn.example/coin.png', 'x'.repeat(1100));
 
     expect(calls[0]!.method).toBe('sendMessage');
+  });
+});
+
+/**
+ * What the bot may do where. Every verdict here is one the doctor prints as a ✓ or a ✗ before
+ * a call depends on it, so a wrong branch is worse than no check: it certifies a channel that
+ * will swallow every call.
+ */
+describe('reading our own rights in a chat', () => {
+  it('passes a channel admin who can post, and the creator', () => {
+    expect(botRights('channel', { status: 'administrator', can_post_messages: true }).ok).toBe(true);
+    expect(botRights('channel', { status: 'creator' }).ok).toBe(true);
+  });
+
+  // The one that is invisible until the first real call fails. "Administrator" on a broadcast
+  // channel is a title Telegram will hand out with no permissions behind it at all.
+  it('fails an admin whose post right was never ticked', () => {
+    const rights = botRights('channel', { status: 'administrator', can_post_messages: false });
+    expect(rights.ok).toBe(false);
+    expect(rights.hint).toContain('Post Messages');
+  });
+
+  it('fails a channel it is merely a member of, where only admins can post', () => {
+    expect(botRights('channel', { status: 'member' }).ok).toBe(false);
+  });
+
+  it('lets it post in a group as an ordinary member, which is the rule there', () => {
+    expect(botRights('supergroup', { status: 'member' }).ok).toBe(true);
+  });
+
+  it('says it is not in a chat it was removed from, rather than that it lacks a right', () => {
+    for (const status of ['left', 'kicked']) {
+      const rights = botRights('channel', { status });
+      expect(rights.ok).toBe(false);
+      expect(rights.detail).toContain('not in it');
+    }
+  });
+
+  // Delete rights are not a blocker — the call still goes out. They decide whether the typed
+  // /signal is left sitting above the card it produced.
+  it('separates being able to publish from being able to tidy up after', () => {
+    expect(botRights('channel', { status: 'administrator', can_delete_messages: false })).toMatchObject({
+      ok: true,
+      canDelete: false,
+    });
+    expect(botRights('channel', { status: 'administrator', can_delete_messages: true }).canDelete).toBe(true);
   });
 });

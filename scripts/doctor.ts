@@ -1,6 +1,7 @@
 import { Api, TelegramClient } from 'telegram';
 import { loadConfig, loadPresentation, loadSources, type AppConfig, type PresentationConfig } from '../src/config';
 import { createClient, primeEntityCache, resolveInputPeer } from '../src/telegram/client';
+import { BotApi, botRights, chatIdFor, type BotChat, type ChatMember } from '../src/telegram/botapi';
 import { FIRE, SKIP } from '../src/pipeline/router';
 import { resolveManualCall } from '../src/pipeline/manual';
 import { fetchImage } from '../src/telegram/photo';
@@ -358,15 +359,31 @@ const NO_CHANNEL: Check = {
  * setting this up wants the whole list in front of them.
  */
 export function credentialChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
+  // A bot token is an alternative to the three below, not a fourth thing to fill in. Asking
+  // for a my.telegram.org app as well would be asking for a login nothing needs.
+  if (env.TG_BOT_TOKEN?.trim()) return [];
+
   const needed: Array<[string, string]> = [
     ['TG_API_ID', 'https://my.telegram.org → API development tools → copy "App api_id"'],
     ['TG_API_HASH', 'the "App api_hash" on that same page'],
     ['TG_SESSION', 'log in with `npm run setup` — it writes the session itself, never printing it'],
   ];
+  const absent = needed.filter(([key]) => !env[key]?.trim());
 
-  return needed
-    .filter(([key]) => !env[key]?.trim())
-    .map(([label, hint]) => ({ status: 'fail' as const, label, detail: 'not set in .env', hint }));
+  // Nothing at all is set, so this is a fresh clone rather than a half-filled file. Naming
+  // three MTProto values here would hide the fact that the quick route needs none of them.
+  if (absent.length === needed.length) {
+    return [
+      {
+        status: 'fail',
+        label: 'credentials',
+        detail: 'no Telegram credentials in .env',
+        hint: 'run `npm run setup` — a bot token publishes in a minute, an account also reads other groups',
+      },
+    ];
+  }
+
+  return absent.map(([label, hint]) => ({ status: 'fail' as const, label, detail: 'not set in .env', hint }));
 }
 
 /**
@@ -441,6 +458,60 @@ export async function reactionCheck(
   return { status: 'ok', label, detail: 'ready · 🚀 approves, 👎 skips' };
 }
 
+/** `available_reactions` as `getChat` returns it. Omitted by Telegram when every emoji is allowed. */
+export type BotReactions = Array<{ type: string; emoji?: string }> | undefined;
+
+/**
+ * The same question as `reactionCheck`, asked of a bot — and with one extra way to fail that
+ * has no MTProto equivalent: Telegram sends `message_reaction` updates *only* to a bot that is
+ * an administrator of the chat. A bot sitting in the war room as an ordinary member receives
+ * no reactions at all, so every staged call waits for an approval that can never arrive, and
+ * nothing anywhere says so.
+ */
+export function botReactionCheck(available: BotReactions, member: ChatMember): Check {
+  const label = 'approve reactions';
+
+  if (member.status !== 'creator' && member.status !== 'administrator') {
+    return {
+      status: 'fail',
+      label,
+      detail: 'the bot is not an admin of the war room, so Telegram sends it no reactions at all',
+      hint: 'promote the bot to admin there — without it nothing staged can ever be approved',
+    };
+  }
+
+  if (!available) return { status: 'ok', label, detail: 'ready · 🚀 approves, 👎 skips' };
+
+  const allowed = new Set(available.filter((r) => r.type === 'emoji' && r.emoji).map((r) => r.emoji!));
+  const canFire = [...FIRE].filter((e) => allowed.has(e));
+  const canSkip = [...SKIP].filter((e) => allowed.has(e));
+
+  if (!canFire.length) {
+    return {
+      status: 'fail',
+      label,
+      detail: `none of the approve reactions (${[...FIRE].join(' ')}) are enabled in the war room`,
+      hint: 'Telegram → war room → Manage → Reactions → add 🚀',
+    };
+  }
+
+  const absent = [!allowed.has('🚀') && '🚀 approve', !allowed.has('👎') && '👎 skip'].filter(
+    (m): m is string => Boolean(m),
+  );
+  if (absent.length) {
+    return {
+      status: 'warn',
+      label,
+      detail: `${absent.join(' and ')} not enabled · approve with ${canFire.join(' ')}${
+        canSkip.length ? `, skip with ${canSkip.join(' ')}` : ''
+      }`,
+      hint: 'add 🚀 and 👎 in the war room reaction settings so the documented taps work',
+    };
+  }
+
+  return { status: 'ok', label, detail: 'ready · 🚀 approves, 👎 skips' };
+}
+
 /** Resolution succeeds from cache even for a group we were kicked from. Reading one message cannot. */
 async function checkSource(client: TelegramClient, source: Source): Promise<Check> {
   const label = `${source.id} [${source.mode}]`;
@@ -482,6 +553,141 @@ async function checkSource(client: TelegramClient, source: Source): Promise<Chec
   }
 }
 
+const NO_WAR_ROOM: Check = {
+  status: 'warn',
+  label: 'war room',
+  detail: 'WAR_ROOM_CHAT is not set — there is nowhere to review',
+  hint: 'without one, stale and high-risk calls are dropped instead of being offered to a human',
+};
+
+/**
+ * The bot path: four HTTP calls and no session at all.
+ *
+ * What it cannot check is as important as what it can. A bot has no dialog list, so there is
+ * nothing to enumerate and nothing to compare a configured id against — every question here is
+ * about a chat we were told about, and "the bot cannot see it" is the same answer whether the
+ * id is wrong or the bot was simply never added. The hint says both.
+ */
+async function botMain(report: Report, config: AppConfig): Promise<number> {
+  const api = new BotApi(config.botToken);
+
+  let me: { id: number; username?: string };
+  try {
+    me = await api.call<{ id: number; username?: string }>('getMe');
+  } catch (err) {
+    report.add('Account', {
+      status: 'fail',
+      label: 'bot token',
+      detail: reason(err),
+      hint: 'TG_BOT_TOKEN is wrong or was revoked — get a fresh one from @BotFather with /token',
+    });
+    // Nothing Telegram-side is knowable now, but the market half of a call never asked
+    // Telegram anything — so it is still worth proving rather than reported as unknown.
+    for (const check of await callPathChecks(config)) report.add('Calling', check);
+    report.render();
+    return 1;
+  }
+
+  report.add('Account', {
+    status: 'ok',
+    label: 'bot token',
+    detail: `@${me.username ?? 'a bot with no username'} · id ${me.id}`,
+  });
+
+  // A source list under a bot token is a list that will never be read. Silence would let
+  // someone wait weeks for a ratings table built from nothing.
+  let listed = 0;
+  try {
+    listed = loadSources().filter((s) => s.enabled).length;
+  } catch {
+    // An absent or unparseable file is not a bot problem — nothing here would read it anyway.
+  }
+  report.add(
+    'Sources',
+    listed
+      ? {
+          status: 'warn',
+          label: 'reading groups',
+          detail: `${plural(listed, 'source')} listed, and a bot can read none of them`,
+          hint: 'a bot only sees chats it was added to — run `npm run setup` and add an account to score groups',
+        }
+      : {
+          status: 'ok',
+          label: 'reading groups',
+          detail: 'none — a bot only ever sees chats it was added to',
+          hint: 'add a reading account with `npm run setup` when you want other groups scored',
+        },
+  );
+
+  let channel: { rights: ReturnType<typeof botRights> } | undefined;
+  let warRoom: { chat: BotChat & { available_reactions?: BotReactions }; member: ChatMember } | undefined;
+
+  for (const [label, target] of [
+    ['channel', config.channel],
+    ['war room', config.warRoom],
+  ] as const) {
+    if (!target) {
+      report.add('Destinations', label === 'channel' ? NO_CHANNEL : NO_WAR_ROOM);
+      continue;
+    }
+
+    try {
+      const chat = await api.call<BotChat & { available_reactions?: BotReactions }>('getChat', {
+        chat_id: chatIdFor(target),
+      });
+      const member = await api.call<ChatMember>('getChatMember', { chat_id: chat.id, user_id: me.id });
+      const rights = botRights(chat.type, member);
+
+      if (label === 'channel') channel = { rights };
+      else warRoom = { chat, member };
+
+      report.add('Destinations', {
+        status: rights.ok ? 'ok' : 'fail',
+        label,
+        detail: `${chat.title ?? target} · ${rights.detail}`,
+        hint: rights.hint,
+      });
+    } catch (err) {
+      report.add('Destinations', {
+        status: 'fail',
+        label,
+        detail: `"${target}" is not visible to the bot: ${reason(err)}`,
+        hint: 'add the bot to that chat as an admin — it cannot see a chat it was never added to',
+      });
+    }
+  }
+
+  if (channel) {
+    const { ok, detail, hint, canDelete } = channel.rights;
+    report.add(
+      'Calling',
+      !ok
+        ? { status: 'fail', label: '/signal rights', detail, hint }
+        : canDelete
+          ? { status: 'ok', label: '/signal rights', detail: 'the command publishes, and is tidied away after' }
+          : {
+              status: 'warn',
+              label: '/signal rights',
+              detail: 'publishes, but the typed command cannot be deleted',
+              hint: 'tick "Delete Messages" too, or the typed /signal stays visible above the card',
+            },
+    );
+  }
+  for (const check of await callPathChecks(config)) report.add('Calling', check);
+
+  if (warRoom) report.add('Behaviour', botReactionCheck(warRoom.chat.available_reactions, warRoom.member));
+
+  report.add('Behaviour', {
+    status: config.live ? 'ok' : 'warn',
+    label: 'publishing',
+    detail: config.live ? 'LIVE=true — approved calls are posted for real' : 'LIVE=false — nothing is ever published',
+    hint: config.live ? undefined : 'calls are parsed, staged and logged only. Set LIVE=true in .env when ready',
+  });
+
+  report.render();
+  return report.count('fail') ? 1 : 0;
+}
+
 async function main(): Promise<number> {
   const report = new Report();
 
@@ -507,6 +713,8 @@ async function main(): Promise<number> {
     report.render();
     return 1;
   }
+
+  if (config.botToken) return botMain(report, config);
 
   let sources: Source[] = [];
   let sourcesError: string | undefined;
@@ -572,16 +780,7 @@ async function main(): Promise<number> {
       ['war room', config.warRoom],
     ] as const) {
       if (!target) {
-        if (label === 'channel') {
-          report.add('Destinations', NO_CHANNEL);
-        } else {
-          report.add('Destinations', {
-            status: 'warn',
-            label: 'war room',
-            detail: 'WAR_ROOM_CHAT is not set — there is nowhere to review',
-            hint: 'without one, stale and high-risk calls are dropped instead of being offered to a human',
-          });
-        }
+        report.add('Destinations', label === 'channel' ? NO_CHANNEL : NO_WAR_ROOM);
         continue;
       }
 
