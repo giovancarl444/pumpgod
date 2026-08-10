@@ -64,6 +64,28 @@ describe('AdminCheck', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  /**
+   * An admin posting anonymously in a supergroup is signed by the group, so the sender id is
+   * the group's own. Only an admin holding the anonymity right can produce that, which makes
+   * it the same free proof a broadcast post gives — and admins of crypto groups routinely
+   * post that way. Looked up instead, the group id resolves to no participant and the command
+   * goes quietly unanswered, which is the one failure indistinguishable from a dead bot.
+   */
+  it('takes a message signed by the group itself as an anonymous admin', async () => {
+    const { client, invoke } = harness(member);
+    const admins = new AdminCheck(client, CHANNEL);
+
+    expect(await admins.allows(command({ fromId: '123' }))).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  // A linked broadcast channel auto-forwarding into a discussion group is also signed by a
+  // channel — a different one. Only this chat's own id is proof of rights over this chat.
+  it('does not extend that to a message signed by some other channel', async () => {
+    const { client } = harness(member);
+    expect(await new AdminCheck(client, CHANNEL).allows(command({ fromId: '456' }))).toBe(false);
+  });
+
   it('refuses when there is no channel configured to be an admin of', async () => {
     const { client } = harness(admin);
     expect(await new AdminCheck(client, undefined).allows(command({ fromId: '7' }))).toBe(false);

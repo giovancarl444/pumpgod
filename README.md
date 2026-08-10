@@ -176,8 +176,10 @@ your phone against the bot running on a server. It works in the war room too, an
 still accepted as an alias.
 
 The command is **admin-only**, and the check costs nothing in the usual case: Telegram only
-lets admins post in a broadcast channel, so the message existing is already the proof. In a
-supergroup, where anyone can type, membership is read back once and cached.
+lets admins post in a broadcast channel, so the message existing is already the proof. The
+same holds for a supergroup message signed by the group rather than a person, which is how an
+anonymous admin posts and is a right only admins have. Otherwise — a supergroup where anyone
+can type — membership is read back once and cached.
 
 The typed command is deleted before the lookup starts, so the channel never sits there
 showing the instruction while it waits — the card is what appears, not the plumbing.

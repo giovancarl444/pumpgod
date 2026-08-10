@@ -6,7 +6,8 @@ import type { IncomingCommand } from './ingest';
  * Whether whoever typed a command in the public channel is allowed to publish through us.
  *
  * A broadcast channel answers this for free: Telegram only lets admins post there, so the
- * message existing is the proof. A supergroup does not — every member can type — so the
+ * message existing is the proof. So does a supergroup message signed by the group itself,
+ * which only an admin posting anonymously can send. Otherwise every member can type, so the
  * membership has to be read back, which costs a round trip. Cached because the answer
  * changes about once a year and a command should not pay for it twice.
  *
@@ -25,6 +26,13 @@ export class AdminCheck {
   async allows(cmd: IncomingCommand): Promise<boolean> {
     if (cmd.post) return true;
 
+    // Sent on behalf of the chat itself, which is what Telegram does for an admin posting
+    // anonymously in a supergroup. Only an admin holding that right can produce it, so this
+    // is the same free proof `post` gives in a broadcast channel — and without it the sender
+    // id is the group's, which resolves to no participant and reads as an outsider. Admins of
+    // crypto groups routinely post anonymously, and the command would go quietly unanswered.
+    if (cmd.fromId && cmd.fromId === this.ownChannelId()) return true;
+
     // No identifiable sender and not a channel post: we cannot say who this was, so we do
     // not act on it. The war room path never reaches here.
     if (!cmd.fromId) return false;
@@ -35,6 +43,10 @@ export class AdminCheck {
     const allowed = await this.lookup(cmd.fromId);
     this.cache.set(cmd.fromId, allowed);
     return allowed;
+  }
+
+  private ownChannelId(): string | undefined {
+    return this.channelPeer instanceof Api.InputPeerChannel ? this.channelPeer.channelId.toString() : undefined;
   }
 
   private async lookup(userId: string): Promise<boolean> {
