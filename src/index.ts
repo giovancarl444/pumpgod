@@ -1,8 +1,10 @@
 import { existsSync } from 'node:fs';
-import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH } from './config';
+import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH, type AppConfig } from './config';
 import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { MtprotoTransport } from './telegram/mtproto';
+import { BotApi, BotTransport } from './telegram/botapi';
+import { BotAdmins, startBotIngest } from './telegram/botingest';
 import { attachIngest } from './telegram/ingest';
 import { AdminCheck } from './telegram/admin';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
@@ -16,8 +18,13 @@ import type { Source } from './types';
 
 async function main() {
   const config = loadConfig();
+  if (config.botToken) return runBot(config);
+
   if (!config.session) {
-    throw new Error('TG_SESSION is empty. Run `npm run login` to create one, then paste it into .env.');
+    throw new Error(
+      'No credentials. Either set TG_BOT_TOKEN from BotFather to publish, or run `npm run setup` ' +
+        'to log a user account in — which is the only way to read other groups.',
+    );
   }
 
   // Relaying and calling coins ourselves are independent halves, so a missing sources file is
@@ -151,6 +158,84 @@ async function main() {
     tracker.stop();
     journal.close();
     await client.disconnect();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+/**
+ * Bot mode: publishes, and reads nothing but the two chats it was told about.
+ *
+ * There is no source list here and there cannot be one — a bot can only be *added* to a group
+ * by an admin of that group, so it will never see a rival's calls. Relaying and the ratings
+ * table need the user-account path. What this does give up nothing on is `/signal`, which is
+ * how our own calls are made, and it does it without a phone number attached to the channel.
+ */
+async function runBot(config: AppConfig) {
+  if (!config.channel) {
+    throw new Error('PUMPGOD_CHANNEL is empty — a bot has nowhere to publish. Run `npm run setup`.');
+  }
+
+  const api = new BotApi(config.botToken);
+  const transport = new BotTransport(api);
+
+  const me = await api.call<{ username?: string }>('getMe');
+  log.info(`connected as @${me.username ?? 'unknown'} (bot)`);
+
+  const channelPeer = await transport.resolve(config.channel);
+  const warRoomPeer = config.warRoom ? await transport.resolve(config.warRoom) : undefined;
+
+  const tracker = new Tracker();
+  tracker.load();
+  tracker.start(config.trackIntervalMs);
+
+  const router = new Router(transport, config, channelPeer, warRoomPeer, tracker);
+  const handleCommand = createCommandHandler({
+    transport,
+    config,
+    router,
+    admins: new BotAdmins(api, channelPeer.id),
+    channelPeer,
+    warRoomPeer,
+  });
+
+  const ingest = startBotIngest(
+    api,
+    { channelId: channelPeer.id, warRoomId: warRoomPeer?.id },
+    { onCommand: (cmd) => void handleCommand(cmd), onReaction: (r) => router.handleReaction(r) },
+  );
+
+  const social = loadSocial();
+  const poster = new Poster({ ...social, dailyRecap: social.dailyRecap });
+  poster.load();
+
+  let socialTimer: NodeJS.Timeout | undefined;
+  if (poster.enabled && config.live) {
+    socialTimer = setInterval(() => void poster.run(Tracker.read()), social.postIntervalMs);
+    log.info(`𝕏 recap feed on · posting calls that reach ${social.minMultiple}x`);
+  } else if (poster.enabled) {
+    log.warn('𝕏 credentials set but LIVE=false — nothing will be posted. Preview with `npm run recap`.');
+  }
+
+  log.info(`pumpgod live · bot mode · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`);
+  if (!config.live) log.warn('LIVE=false — calls are logged but never posted. Flip LIVE=true when ready.');
+  log.info('type /signal <address> in the channel or the war room to call a coin');
+
+  const metrics = setInterval(() => {
+    router.sweep();
+    log.info(formatSnapshot());
+  }, config.metricsIntervalMs);
+
+  const shutdown = () => {
+    clearInterval(metrics);
+    if (socialTimer) clearInterval(socialTimer);
+    ingest.stop();
+    log.info('shutting down');
+    log.info(formatSnapshot());
+    tracker.stop();
+    journal.close();
     process.exit(0);
   };
 

@@ -45,11 +45,11 @@ export class BotApi {
     private readonly timeoutMs = 10_000,
   ) {}
 
-  async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  async call<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
     // 429 is the one failure worth retrying: Telegram states exactly how long to wait, and a
     // call arriving a second late still beats one that never arrives.
     for (let attempt = 0; ; attempt++) {
-      const body = await this.post<T>(method, params);
+      const body = await this.post<T>(method, params, timeoutMs ?? this.timeoutMs);
       const wait = body.parameters?.retry_after;
       if (body.ok) return body.result as T;
       if (wait === undefined || attempt >= 1) {
@@ -60,9 +60,9 @@ export class BotApi {
     }
   }
 
-  private async post<T>(method: string, params: Record<string, unknown>): Promise<Envelope<T>> {
+  private async post<T>(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<Envelope<T>> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${BASE}/bot${this.token}/${method}`, {
         method: 'POST',
