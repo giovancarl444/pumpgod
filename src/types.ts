@@ -122,4 +122,6 @@ export interface Signal {
   stale: boolean;
   /** Tradability screen. Recomputed on real market data once enrichment lands. */
   risk: RiskRead;
+  /** Stats are already live market data rather than a source's claim, so there is nothing to add. */
+  enriched?: boolean;
 }

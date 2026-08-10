@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "call": "tsx scripts/call.ts",
     "login": "tsx scripts/login.ts",
     "doctor": "tsx scripts/doctor.ts",
     "dialogs": "tsx scripts/list-dialogs.ts",

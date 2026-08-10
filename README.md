@@ -109,6 +109,42 @@ It exits non-zero on anything blocking, so a supervisor can gate the process on 
 you can watch it work for a day before it can embarrass you. Flip to `LIVE=true` when the
 hit rate looks right.
 
+## Calling a coin yourself
+
+Relaying is only half of it. To call something you found, type this in the war room:
+
+```
+call DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
+```
+
+An address, a DexScreener link, a pump.fun link — anything the parser already understands.
+Telegram delivers your own messages to every session of the account, so this works from
+your phone against the bot running on a server.
+
+The command word is required. The war room is also where you *discuss* coins, and a chat
+that publishes whatever gets pasted into it has no undo.
+
+Unlike a relayed call, a manual one **resolves market data before publishing, not after**.
+The relay path fires first because it is racing a group that has already posted; a coin you
+call yourself is racing nobody, so the round trip is free. More to the point, an address on
+its own carries no numbers — the tradability screen would have nothing to read and would
+pass everything, which is exactly the guarantee worth keeping. If DexScreener has no pool
+for it, there is nothing to buy, and pumpgod says so instead of posting a naked address.
+
+To see what a call will look like without posting it — and without a Telegram account:
+
+```bash
+npm run call -- <address or link>
+```
+
+That prints the exact public message, every link target, and the screen's verdict. It never
+posts: one process owns the dedupe window and the outcome tracker, and a second writer would
+corrupt both.
+
+Your own calls are tracked as source `manual`, so `npm run scorecard` answers the question
+that starts to matter once you are picking coins yourself — are you beating the groups you
+follow?
+
 ## Source modes
 
 Set per source in `config/sources.json`:
@@ -136,6 +172,7 @@ double-post, it is recorded as a confirmation and shown as `2× confirmed`.
 ```bash
 npm run doctor           # prove the setup before a call depends on it
 npm run dev              # run it
+npm run call -- <addr>   # preview a call you'd make yourself (posts nothing)
 npm run bench            # parser latency
 npm run bench -- --network   # add send round-trip (posts probes to the war room)
 npm run replay           # re-run the journal through the current parser
@@ -207,10 +244,10 @@ which is why this is a TypeScript codebase.
 src/
   parse/      address extraction, chain inference, stat fields — pure and synchronous
   telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler
-  pipeline/   routing, dedupe, enrichment, tradability screen
+  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls
   format/     message rendering
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
   track/      outcome tracking — entry, peak, milestones, rugs
-scripts/      login, doctor, dialogs, bench, replay, scorecard
+scripts/      login, doctor, dialogs, call, bench, replay, scorecard
 ```

@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { Api, TelegramClient, helpers } from 'telegram';
 import { Router } from '../src/pipeline/router';
 import type { AppConfig } from '../src/config';
-import type { Source } from '../src/types';
+import type { ParsedCall, Source } from '../src/types';
 import type { IncomingMessage } from '../src/telegram/ingest';
 import { journal } from '../src/store/journal';
 
@@ -77,6 +77,27 @@ function incoming(src: Source, text = CALL_TEXT, messageId = 1): IncomingMessage
     messageUnix: Math.floor(Date.now() / 1000),
     recvAt: performance.now(),
     isEdit: false,
+  };
+}
+
+const MANUAL_ADDRESS = 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
+
+/** What `resolveManualCall` hands the router: an address plus live market data. */
+function manualCall(stats: Partial<ParsedCall['stats']> = {}): ParsedCall {
+  const token: ParsedCall['token'] = {
+    address: MANUAL_ADDRESS,
+    kind: 'solana',
+    chain: 'solana',
+    origin: 'labelled',
+    confidence: 1,
+  };
+  return {
+    token,
+    pairAddress: 'EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx',
+    name: 'dogwifhat',
+    ticker: 'WIF',
+    stats: { marketCapUsd: 300_000, liquidityUsd: 60_000, volumeUsd: 120_000, ...stats },
+    candidates: [token],
   };
 }
 
@@ -218,6 +239,57 @@ describe('Router', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.peer).toBe(WAR_ROOM);
     expect(sent[0]!.text).toContain('HELD BACK');
+  });
+
+  it('a coin we call ourselves goes straight to the channel', async () => {
+    const { router, sent } = harness();
+    router.callManual(manualCall(), `call ${MANUAL_ADDRESS}`, performance.now());
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.peer).toBe(CHANNEL);
+    expect(sent[0]!.text).toContain('PUMPGOD CALL');
+    expect(sent[0]!.text).toContain('WIF');
+  });
+
+  it('does not re-fetch market data it already has', async () => {
+    // Manual calls resolve before publishing, so the post-publish enrich pass would be a
+    // second round trip that could only overwrite fresher numbers with the same ones.
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ pairs: [] }) }) as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { router, sent, edits } = harness({ enrichEnabled: true });
+    router.callManual(manualCall(), 'call x', performance.now());
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(edits).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it('holds back a coin we call ourselves if it cannot be exited', async () => {
+    const { router, sent } = harness();
+    router.callManual(
+      manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }),
+      'call x',
+      performance.now(),
+    );
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.peer).toBe(WAR_ROOM);
+    expect(sent[0]!.text).toContain('HELD BACK');
+  });
+
+  it('will not call the same coin twice', async () => {
+    const { router, sent } = harness();
+    router.callManual(manualCall(), 'call x', performance.now());
+    await settle();
+    router.callManual(manualCall(), 'call x', performance.now());
+    await settle();
+
+    expect(sent).toHaveLength(1);
   });
 
   it('ignores a reaction on a message it never staged', async () => {

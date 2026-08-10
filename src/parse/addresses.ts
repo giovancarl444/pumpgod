@@ -47,7 +47,8 @@ interface UrlHit {
   isPair: boolean;
 }
 
-function classify(address: string): { kind: AddressKind; chain: Chain } | undefined {
+/** Which address family a string belongs to, and the chain that implies where it is unambiguous. */
+export function classifyAddress(address: string): { kind: AddressKind; chain: Chain } | undefined {
   if (/^0x[a-fA-F0-9]{40}$/.test(address)) return { kind: 'evm', chain: 'unknown' };
   if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)) return { kind: 'tron', chain: 'tron' };
   if (looksLikeSolana(address)) return { kind: 'solana', chain: 'solana' };
@@ -75,7 +76,7 @@ export function addressesFromUrls(text: string): UrlHit[] {
 
     const segs = path.split('/').filter(Boolean);
     const push = (address: string, chain: Chain, isPair: boolean) => {
-      const c = classify(address);
+      const c = classifyAddress(address);
       if (!c) return;
       hits.push({ address, kind: c.kind, chain: chain === 'unknown' ? c.chain : chain, isPair });
     };
@@ -148,7 +149,7 @@ function labelledAt(text: string, label: RegExp): Set<string> {
       window.match(/^[`"']?\s*(0x[a-fA-F0-9]{40})/)?.[1] ??
       window.match(/^[`"']?\s*([1-9A-HJ-NP-Za-km-z]{32,44})/)?.[1] ??
       window.match(/^[`"']?\s*(T[1-9A-HJ-NP-Za-km-z]{33})/)?.[1];
-    if (candidate && classify(candidate)) found.add(candidate);
+    if (candidate && classifyAddress(candidate)) found.add(candidate);
   }
   return found;
 }
@@ -171,7 +172,7 @@ export function extractAddresses(text: string): { tokens: TokenRef[]; pairAddres
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(stripped)) !== null) {
-      if (classify(m[0])) bare.add(m[0]);
+      if (classifyAddress(m[0])) bare.add(m[0]);
     }
   }
   for (const m of text.match(SUI) ?? []) bare.add(m);
@@ -186,7 +187,7 @@ export function extractAddresses(text: string): { tokens: TokenRef[]; pairAddres
 
   const scored = new Map<string, TokenRef>();
   const consider = (address: string, origin: TokenRef['origin'], confidence: number) => {
-    const c = classify(address);
+    const c = classifyAddress(address);
     if (!c) return;
     const lower = address.toLowerCase();
     if (EVM_BLOCKLIST.has(lower) || SOLANA_BLOCKLIST.has(address)) return;

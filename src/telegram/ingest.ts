@@ -21,10 +21,18 @@ export interface IncomingReaction {
   recvAt: number;
 }
 
+/** Something typed in the war room. Commands are how we call a coin of our own. */
+export interface IncomingCommand {
+  text: string;
+  messageId: number;
+  recvAt: number;
+}
+
 export interface IngestHandlers {
   /** Must stay synchronous. Anything slow belongs behind a promise the handler kicks off. */
   onMessage(msg: IncomingMessage): void;
   onReaction(reaction: IncomingReaction): void;
+  onCommand(cmd: IncomingCommand): void;
 }
 
 function peerKey(peer: Api.TypePeer): string | undefined {
@@ -38,14 +46,17 @@ function peerKey(peer: Api.TypePeer): string | undefined {
  * Subscribes to raw updates rather than GramJS's NewMessage event. The high-level event
  * builder resolves senders and chats before it hands anything over, which can mean a
  * network round trip — on this path that would cost more than everything else combined.
+ *
+ * Returns the handler it registered, so `npm run drill` can push a message through the
+ * exact same code path instead of a copy of it that could drift.
  */
 export function attachIngest(
   client: TelegramClient,
   watched: Map<string, Source>,
   warRoomId: string | undefined,
   handlers: IngestHandlers,
-): void {
-  client.addEventHandler((update: Api.TypeUpdate) => {
+): (update: Api.TypeUpdate) => void {
+  const onUpdate = (update: Api.TypeUpdate) => {
     const recvAt = performance.now();
 
     const isNew = update instanceof Api.UpdateNewChannelMessage || update instanceof Api.UpdateNewMessage;
@@ -61,6 +72,14 @@ export function attachIngest(
 
       const chatId = peerKey(message.peerId);
       if (!chatId) return;
+
+      // The war room is where we talk to ourselves. Telegram delivers our own outgoing
+      // messages to every other session of the account, so typing a command on a phone
+      // reaches the running bot.
+      if (chatId === warRoomId && isNew) {
+        handlers.onCommand({ text, messageId: message.id, recvAt });
+        return;
+      }
 
       const source = watched.get(chatId);
       if (!source || !source.enabled) return;
@@ -97,5 +116,8 @@ export function attachIngest(
         }
       }
     }
-  }, new Raw({}));
+  };
+
+  client.addEventHandler(onUpdate, new Raw({}));
+  return onUpdate;
 }

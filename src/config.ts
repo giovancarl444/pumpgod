@@ -35,22 +35,15 @@ export function normalisePeerId(raw: string | number): string {
   return digits;
 }
 
-export interface AppConfig {
-  apiId: number;
-  apiHash: string;
-  session: string;
-  channel: string;
-  warRoom?: string;
+/** How a call is judged and rendered. Needs no Telegram credentials, so `npm run call` can
+ *  resolve and show a real call before the account is ever set up. */
+export interface PresentationConfig {
   live: boolean;
   showSource: boolean;
-  dedupeTtlMs: number;
+  footer: string;
   enrichEnabled: boolean;
   enrichTimeoutMs: number;
-  footer: string;
-  metricsIntervalMs: number;
   maxCallAgeSec: number;
-  catchupIntervalMs: number;
-  trackIntervalMs: number;
   /** Buy-button templates, `{address}` substituted. Blank falls back to a DexScreener search. */
   tradeUrlSol: string;
   tradeUrlEvm: string;
@@ -59,27 +52,45 @@ export interface AppConfig {
   referralLabel: string;
 }
 
+export interface AppConfig extends PresentationConfig {
+  apiId: number;
+  apiHash: string;
+  session: string;
+  channel: string;
+  warRoom?: string;
+  dedupeTtlMs: number;
+  metricsIntervalMs: number;
+  catchupIntervalMs: number;
+  trackIntervalMs: number;
+}
+
+export function loadPresentation(): PresentationConfig {
+  return {
+    live: bool('LIVE', false),
+    showSource: bool('SHOW_SOURCE', false),
+    footer: process.env.FOOTER?.trim() ?? 'NFA · DYOR',
+    enrichEnabled: bool('ENRICH_ENABLED', true),
+    enrichTimeoutMs: num('ENRICH_TIMEOUT_MS', 2500),
+    maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
+    tradeUrlSol: process.env.TRADE_URL_SOL?.trim() || 'https://axiom.trade/t/{address}',
+    tradeUrlEvm: process.env.TRADE_URL_EVM?.trim() ?? '',
+    referralUrl: process.env.REFERRAL_URL?.trim() || undefined,
+    referralLabel: process.env.REFERRAL_LABEL?.trim() || 'Trade these faster',
+  };
+}
+
 export function loadConfig(): AppConfig {
   return {
+    ...loadPresentation(),
     apiId: Number(required('TG_API_ID')),
     apiHash: required('TG_API_HASH'),
     session: process.env.TG_SESSION?.trim() ?? '',
     channel: process.env.PUMPGOD_CHANNEL?.trim() ?? '',
     warRoom: process.env.WAR_ROOM_CHAT?.trim() || undefined,
-    live: bool('LIVE', false),
-    showSource: bool('SHOW_SOURCE', false),
     dedupeTtlMs: num('DEDUPE_TTL_SEC', 21_600) * 1000,
-    enrichEnabled: bool('ENRICH_ENABLED', true),
-    enrichTimeoutMs: num('ENRICH_TIMEOUT_MS', 2500),
-    footer: process.env.FOOTER?.trim() ?? 'NFA · DYOR',
     metricsIntervalMs: num('METRICS_INTERVAL_SEC', 300) * 1000,
-    maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
     catchupIntervalMs: num('CATCHUP_INTERVAL_SEC', 60) * 1000,
     trackIntervalMs: num('TRACK_INTERVAL_SEC', 60) * 1000,
-    tradeUrlSol: process.env.TRADE_URL_SOL?.trim() || 'https://axiom.trade/t/{address}',
-    tradeUrlEvm: process.env.TRADE_URL_EVM?.trim() ?? '',
-    referralUrl: process.env.REFERRAL_URL?.trim() || undefined,
-    referralLabel: process.env.REFERRAL_LABEL?.trim() || 'Trade these faster',
   };
 }
 

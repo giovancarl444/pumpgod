@@ -7,6 +7,7 @@ import { editFast, sendFast } from '../telegram/send';
 import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
+import { MANUAL_SOURCE } from './manual';
 import { assess } from './risk';
 import { record } from '../metrics/latency';
 import { journal } from '../store/journal';
@@ -38,6 +39,8 @@ export interface RouteInput {
   originUnix: number;
   recvAt: number;
   parsedAt: number;
+  /** Stats already carry live market data, so publishing must not re-fetch them. */
+  enriched?: boolean;
 }
 
 export class Router {
@@ -107,6 +110,7 @@ export class Router {
       // Pure arithmetic on numbers we already hold — sub-microsecond, so it can gate the
       // publish. Re-read against real market data in `upgrade`.
       risk: assess(call),
+      enriched: input.enriched,
       timings: {
         messageUnix: input.originUnix,
         recvAt: input.recvAt,
@@ -144,6 +148,26 @@ export class Router {
       }
       void this.stage(signal);
     }
+  }
+
+  /**
+   * A call we made ourselves, from an address handed straight to us. Market data was
+   * resolved before this point, so it arrives at the same gates a relayed call reaches —
+   * dedupe, screening, publish — already carrying real numbers to be judged on.
+   */
+  callManual(call: ParsedCall, rawText: string, recvAt: number): void {
+    const now = performance.now();
+    this.route({
+      source: MANUAL_SOURCE,
+      call,
+      chatId: 'manual',
+      messageId: 0,
+      rawText,
+      originUnix: Math.floor(Date.now() / 1000),
+      recvAt,
+      parsedAt: now,
+      enriched: true,
+    });
   }
 
   private passesFilters(source: Source, call: NonNullable<ReturnType<typeof parseCall>>): boolean {
@@ -184,7 +208,7 @@ export class Router {
       journal.write('called', this.record(signal));
       this.tracker?.track(signal, 'called');
 
-      if (this.config.enrichEnabled && sent.messageId) {
+      if (this.config.enrichEnabled && sent.messageId && !signal.enriched) {
         void this.upgrade(signal, sent.messageId);
       }
     } catch (err) {

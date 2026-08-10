@@ -4,6 +4,9 @@ import { attachIngest } from './telegram/ingest';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
+import { parseCommand, resolveManualCall } from './pipeline/manual';
+import { sendFast } from './telegram/send';
+import { escapeHtml } from './format/call';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
 import { log } from './log';
@@ -64,12 +67,36 @@ async function main() {
   const catchup = new Catchup(client);
   catchup.load();
 
+  // `call <address>` in the war room publishes a coin of our own.
+  const say = async (text: string) => {
+    if (!warRoomPeer) return;
+    await sendFast(client, warRoomPeer, text, { stage: 'send.warroom' }).catch(() => undefined);
+  };
+
+  const handleCommand = async (cmd: { text: string; recvAt: number }) => {
+    const argument = parseCommand(cmd.text);
+    if (!argument) return;
+
+    // Resolving market data first is what makes this callable at all: an address on its own
+    // has no numbers for the screen to read. Nobody is being raced, so the hop is free.
+    const outcome = await resolveManualCall(argument, Math.max(config.enrichTimeoutMs, 5000));
+    if (!outcome.ok) {
+      log.warn(`manual call rejected: ${outcome.reason}`);
+      await say(`✗ ${escapeHtml(outcome.reason)}`);
+      return;
+    }
+
+    router.callManual(outcome.call, cmd.text, cmd.recvAt);
+    if (!config.live) await say('🔇 LIVE=false — nothing was published.');
+  };
+
   attachIngest(client, watched, warRoomId, {
     onMessage: (msg) => {
       catchup.note(msg.chatId, msg.messageId);
       router.handleMessage(msg);
     },
     onReaction: (reaction) => router.handleReaction(reaction),
+    onCommand: (cmd) => void handleCommand(cmd),
   });
 
   // Anything that arrived while the socket was down is replayed here. Recovered calls are
