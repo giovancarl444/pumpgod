@@ -411,6 +411,34 @@ are already about to buy something.
 `TRADE_URL_EVM` are templates (`{address}`, `{chain}`) so the Buy button deep-links into
 whichever terminal you actually use. Both live in `.env`, never in the repo.
 
+### Selling a slot
+
+The other revenue line is direct: someone pays to have their coin posted in the channel. Off by
+default (`PROMO_ENABLED`), because turning it on changes what the channel is.
+
+It runs entirely in DMs. `/promote <address>` to the bot resolves the coin, screens it, and only
+then opens a Telegram Stars invoice — **nothing is charged for until we know we can post it**, so
+a honeypot is refused for free rather than refunded after an argument, and the refund path stays
+reserved for our own failures. Stars are the only currency a bot may charge in for something
+delivered inside Telegram; enable them in @BotFather → Payments.
+
+What gets posted is deliberately not a call. It is headed `📣 PAID PROMOTION`, it never wears the
+`PUMPGOD ⚡` header, and it says in its own text that we did not choose the coin. It is recorded
+under its own source id with its own `promo` outcome, ranked *above* `called` so the outcome is
+sticky and no later code path can quietly upgrade a bought slot into a call of ours. `isPublished()`
+asks for `called`, so a promotion cannot reach the scoreboard, the X feed or the milestone replies
+by any route. Two tests hold that line.
+
+That is not squeamishness. Undisclosed paid promotion is the structure regulators treat as fraud
+rather than marketing, and it would make every other number here unverifiable — which is the only
+thing this channel actually has. `PROMO_DAILY_LIMIT` is the rest of the answer: a rolling 24-hour
+cap counting what was *posted*, because the difference between a channel and a billboard is a
+number and it should be a small one.
+
+If money is taken and the post fails, the Stars are refunded unconditionally; if the refund also
+fails the order is left `owed` and shouted about at every boot, because a debt that only exists in
+a JSON file is one nobody ever pays.
+
 Taking a cut of trades directly — an in-Telegram buy button with a wallet pumpgod controls —
 earns more per user, but it means holding other people's keys. That is a custody product with
 a custody product's failure mode, and a different legal posture, and it should not be built
@@ -433,8 +461,13 @@ understate a run.
 calls per source the scorecard says which are worth copying, and only then do any of them get
 promoted to `review` or `auto`. Blocked on a login; see [CHECKLIST.md](CHECKLIST.md).
 
-**Then — an interactive surface.** Inline buttons and `callback_query`, which nothing here
-uses yet. Needed on its own merits, and a prerequisite for the one after it.
+**Done — a way to be paid without lying.** Buy and Chart are real inline buttons under every
+call, and a DM surface sells a clearly-marked promotion slot for Stars that is structurally
+barred from the track record.
+
+**Then — the rest of the interactive surface.** `callback_query`, which nothing here answers
+yet: buttons currently only carry links. Needed on its own merits, and a prerequisite for the
+one after it.
 
 **Then — member calls.** Members submit picks by DM, tracked privately in the same tracker,
 ranked on median peak with a minimum sample. Turns lurkers into competitors and gives people
@@ -454,10 +487,10 @@ a machine for amplifying proof, so it comes after there is proof.
 src/
   parse/      address extraction, chain inference, stat fields — pure and synchronous
   telegram/   MTProto client, raw-update ingest, fast send, HTML→entity compiler
-  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls
+  pipeline/   routing, dedupe, enrichment, tradability screen, manual calls, paid slots
   format/     message rendering
   metrics/    latency histograms
-  store/      journal (buffered, off the hot path)
+  store/      journal (buffered, off the hot path); promo orders (on disk, because money)
   track/      outcome tracking — entry, peak, milestones, rugs; and what it all adds up to
   social/     the record, published — X feed, in-channel milestone replies, pinned scoreboard
 scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap, scoreboard

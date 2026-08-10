@@ -156,9 +156,17 @@ export interface PromoConfig {
    * The price, in Telegram Stars.
    *
    * Stars are the only currency a bot may charge in for something delivered inside Telegram,
-   * and Telegram sets the rate. It has been roughly €0.02 a Star to buy, so ~1000 Stars is
-   * the €20 mark — but the app stores take their cut of the purchase and the payout rate
-   * moves, so check the current figure before trusting the conversion.
+   * so the euro price is never something we set directly — Telegram does, and it is not even
+   * one number. A Star costs roughly €0.0175 topped up inside the phone app (Apple and Google
+   * take ~30% of that) and roughly €0.0122 on the web, where they do not.
+   *
+   * 1150 is therefore about €20 to the buyer who tops up on their phone, which is most of
+   * them, and about €14 to the one who knows to use the web. Erring towards the app rate is
+   * the right direction: the informed buyer gets a discount rather than the ordinary one
+   * getting overcharged. We net around €13 of it either way, because the payout rate is its
+   * own third number (~$0.013 a Star, less Fragment's 5% on withdrawal).
+   *
+   * All three move. Check them before trusting this default to still mean €20.
    */
   priceStars: number;
   /** Slots per rolling 24h. The number that decides whether this is a channel or a billboard. */
@@ -168,7 +176,7 @@ export interface PromoConfig {
 export function loadPromo(): PromoConfig {
   return {
     enabled: bool('PROMO_ENABLED', false),
-    priceStars: num('PROMO_PRICE_STARS', 1000),
+    priceStars: num('PROMO_PRICE_STARS', 1150),
     dailyLimit: num('PROMO_DAILY_LIMIT', 3),
   };
 }

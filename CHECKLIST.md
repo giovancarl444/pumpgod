@@ -65,13 +65,63 @@ why. Put all four in `.env`. `npm run recap` previews the feed without posting.
 
 ---
 
+## To sell promotion slots
+
+The code is written and off (`PROMO_ENABLED=false`). Three of these are decisions, not steps.
+
+### 7. Decide whether to open it at all
+
+Selling a slot changes what the channel is. The build makes the honest version the only version
+available — the card is headed `📣 PAID PROMOTION`, never wears the pumpgod header, says outright
+that we did not pick the coin, and cannot enter the track record by any route. That is the
+version that survives someone looking hard at it, and it is also the version that keeps brand
+deals possible later.
+
+The dishonest version — paid pumps posted as if they were our own calls — pays more, immediately,
+and it is the one thing on this whole roadmap that would make everything else worthless. Every
+number we publish is only worth something because it is checkable. One undisclosed paid call and
+none of them are.
+
+**Do:** decide. If yes, keep `PROMO_DAILY_LIMIT` small — three a day is already a lot in a feed
+people follow for calls.
+
+### 8. Enable payments for the bot
+
+Stars are the only currency a bot may charge in for something delivered inside Telegram. There is
+no provider token and no Stripe account; Telegram handles the money.
+
+**Do:** @BotFather → your bot → **Payments** → enable. Without this every invoice fails and the
+buyer sees an error instead of a checkout.
+
+### 9. Check what a Star is worth today, then set the price
+
+`PROMO_PRICE_STARS=1150` is the €20 default, but "€20" depends on where the buyer topped up:
+roughly **€0.0175 a Star inside the phone app** (Apple and Google take ~30%) and **€0.0122 on the
+web**. So 1150 Stars is ≈ €20 on a phone and ≈ €14 on the web. We receive around €13 of it —
+the payout rate is a third number again (~$0.013 a Star, less Fragment's 5% to withdraw).
+
+**Do:** check the current rate before the first sale, and treat the payout number as the real
+price rather than the sticker. All three move independently.
+
+### 10. Test it on yourself, in a DM
+
+The DM surface is deliberately separate from the command path — a `/signal` sent to the bot by a
+stranger must never publish. That gate has a test, but the payment flow has never touched
+Telegram's real checkout.
+
+**Do:** with `PROMO_ENABLED=true` and `LIVE=true`, DM the bot `/promote <a real Solana address>`
+and pay it yourself. Refunds go through `refundStarPayment`, so the Stars come back. Confirm the
+card lands looking like an advert and that `npm run scoreboard` does **not** count it.
+
+---
+
 ## To unlock watching rival groups
 
 This is the biggest unlock in the whole plan and it is blocked entirely on you. A bot can
 only see chats an admin **added** it to. That is a Telegram platform rule, not something in
 our code, so pumpgod can never read a rival group from the bot account.
 
-### 7. Log in a reader account
+### 11. Log in a reader account
 
 **Do:** `npm run login`, on a **separate Telegram account** — not the bot, not your personal
 one. That account joins rival groups and is the one that eventually gets banned. The bot owns
@@ -80,12 +130,12 @@ the channel and has to stay clean, which is why they must never be the same acco
 Type the phone number into the prompt yourself. Never paste it into a command for me to run —
 that sends a real SMS to a real phone.
 
-### 8. List the groups to watch
+### 12. List the groups to watch
 
 **Do:** fill `config/sources.json` with the rival groups, **every one of them in
 `"mode": "shadow"`**. Shadow records what a group would have made us and publishes nothing.
 
-### 9. Wait, then promote on the numbers
+### 13. Wait, then promote on the numbers
 
 **Do:** after ~20 calls from a source, run `npm run scorecard`. It ranks each group on median
 peak multiple, hit rate and rug rate. Move the ones that earn it to `review`, and only the
