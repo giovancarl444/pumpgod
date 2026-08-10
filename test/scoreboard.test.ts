@@ -8,7 +8,7 @@ import { competitionBoard, Pinned, readPinned, type PinnedState } from '../src/s
 import { createMemberHandlers, memberSourceId } from '../src/pipeline/member';
 import type { AppConfig, CompetitionConfig } from '../src/config';
 import type { TrackedCall, Tracker } from '../src/track/tracker';
-import type { Peer, SendResult, Transport } from '../src/telegram/transport';
+import type { Button, Peer, SendResult, Transport } from '../src/telegram/transport';
 
 function call(over: Partial<TrackedCall> = {}): TrackedCall {
   return {
@@ -31,6 +31,7 @@ interface Edit {
   peer: Peer;
   messageId: number;
   html: string;
+  keyboard?: Button[][];
 }
 
 function transport(outcome: 'ok' | 'fail' = 'ok') {
@@ -39,9 +40,9 @@ function transport(outcome: 'ok' | 'fail' = 'ok') {
     kind: 'bot',
     resolve: async () => ({ id: 'x' }),
     send: async (): Promise<SendResult> => ({ dispatchAt: 0, ackAt: 1 }),
-    edit: async (peer, messageId, html) => {
+    edit: async (peer, messageId, html, opts) => {
       if (outcome === 'fail') throw new Error('message to edit not found');
-      edits.push({ peer, messageId, html });
+      edits.push({ peer, messageId, html, keyboard: opts?.keyboard });
     },
     sendPhoto: async () => ({ dispatchAt: 0, ackAt: 1 }),
     delete: async () => {},
@@ -215,7 +216,7 @@ describe('the pinned leaderboard', () => {
       tracker,
     });
 
-    const board = new Pinned(store, competitionBoard(member, COMP));
+    const board = new Pinned(store, competitionBoard(member, COMP, 'pumpgodbot'));
     board.load();
     return board;
   }
@@ -239,6 +240,35 @@ describe('the pinned leaderboard', () => {
 
     expect(edits[0]!.html).toContain('Nobody has entered yet');
     expect(edits[0]!.html).toContain('/submit');
+  });
+
+  /**
+   * The table is read in the channel and answered in a DM, so it has to say which bot. "DM the
+   * bot" pinned under a table asks a stranger to go and find it, which is where they stop.
+   */
+  it('names the bot to message, tappably', async () => {
+    const board = competition([]);
+    const { transport: t, edits } = transport();
+    await board.refresh(t, { id: '-1002' }, []);
+
+    expect(edits[0]!.html).toContain('<a href="https://t.me/pumpgodbot">DM @pumpgodbot</a>');
+    expect(edits[0]!.keyboard?.[0]?.[0]).toMatchObject({ url: 'https://t.me/pumpgodbot' });
+  });
+
+  /**
+   * Telegram reads an edit carrying no markup as an edit *to* no markup, so a button that is
+   * not re-sent survives exactly until the first time a price moves — and this button is the
+   * only route from the table to the DM that answers it.
+   */
+  it('keeps the button through an edit', async () => {
+    const board = competition([pick('77', 3)]);
+    const { transport: t, edits } = transport();
+
+    await board.refresh(t, { id: '-1002' }, [pick('77', 3)]);
+    await board.refresh(t, { id: '-1002' }, [pick('77', 9)]);
+
+    expect(edits).toHaveLength(2);
+    for (const edit of edits) expect(edit.keyboard?.[0]?.[0]?.url).toBe('https://t.me/pumpgodbot');
   });
 
   /**

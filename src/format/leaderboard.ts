@@ -20,12 +20,12 @@ const MEDALS = ['🥇', '🥈', '🥉'];
  * differs from what was sent last — a timestamp would make it differ every single minute, and
  * the table would sit there re-editing itself in front of everyone while saying nothing new.
  */
-export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig): string {
+export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig, bot?: string): string {
   if (!standings.length) {
     return [
       '🏆 <b>call competition</b>',
       '',
-      'Nobody has entered yet. DM the bot <code>/submit &lt;contract address&gt;</code> ' +
+      `Nobody has entered yet. ${dm(bot)} <code>/submit &lt;contract address&gt;</code> ` +
         `— ${picksPerDay(comp)}, priced for 24 hours, scored on the peak.`,
     ].join('\n');
   }
@@ -52,8 +52,9 @@ export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig
   }
 
   lines.push('');
+  lines.push(`${dm(bot)} <code>/submit &lt;contract address&gt;</code> to enter.`);
   lines.push(
-    `<i>Median peak over every pick, wins and losses. ${cap(picksPerDay(comp))}, by DM to the bot. ` +
+    `<i>Median peak over every pick, wins and losses. ${cap(picksPerDay(comp))}. ` +
       `Picks are never posted in the channel — only what they did reaches this table.</i>`,
   );
   return lines.join('\n');
@@ -139,4 +140,16 @@ function picksPerDay(comp: CompetitionConfig): string {
 
 function cap(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * "DM @pumpgodbot", tappable, wherever the bot's name is known.
+ *
+ * Pinned in a channel this is the entire call to action: a member reading the table has to end
+ * up in a DM with the bot, and "DM the bot" without naming which one asks them to go and find
+ * it. In an actual DM the name is not known and not needed — they are already there.
+ */
+function dm(bot: string | undefined): string {
+  const handle = bot?.replace(/^@/, '');
+  return handle ? `<a href="https://t.me/${escapeHtml(handle)}">DM @${escapeHtml(handle)}</a>` : 'DM the bot';
 }

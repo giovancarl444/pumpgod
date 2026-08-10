@@ -298,7 +298,9 @@ async function runBot(config: AppConfig) {
 
   // Only when the competition is on. Otherwise the file could exist from a previous run and
   // the daemon would keep a table current that nobody can add a pick to.
-  const boards = competition.enabled ? [new Pinned(BOARD_STORE, competitionBoard(member, competition))] : [];
+  const boards = competition.enabled
+    ? [new Pinned(BOARD_STORE, competitionBoard(member, competition, me.username))]
+    : [];
 
   const receiptTimer = startReceipts(transport, tracker, config, channelPeer, boards);
 

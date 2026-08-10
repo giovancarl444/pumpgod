@@ -1,7 +1,6 @@
 import { loadCompetition, loadConfig } from '../src/config';
-import { renderLeaderboard } from '../src/format/leaderboard';
 import { createMemberHandlers } from '../src/pipeline/member';
-import { readPinned, writePinned, BOARD_STORE } from '../src/social/pinned';
+import { competitionBoard, readPinned, writePinned, BOARD_STORE } from '../src/social/pinned';
 import { BotApi, chatIdFor } from '../src/telegram/botapi';
 import { Tracker } from '../src/track/tracker';
 
@@ -43,7 +42,15 @@ async function main() {
   const member = createMemberHandlers({ config, competition, tracker });
   member.members.load();
 
-  const text = renderLeaderboard(member.leaderboard(Tracker.read()), competition);
+  const api = new BotApi(config.botToken);
+
+  // Before the preview, not after. The board names the bot people are meant to message, so a
+  // preview rendered without it would not be a preview of what gets pinned — and the daemon,
+  // which does know the name, would rewrite the message on its very first pass.
+  const me = await api.call<{ username?: string }>('getMe');
+  const kind = competitionBoard(member, competition, me.username);
+  const text = kind.render(Tracker.read());
+  if (!text) fail('Nothing to render.');
 
   console.log(`\n${text}\n`);
   if (!process.argv.includes('--pin')) {
@@ -51,7 +58,6 @@ async function main() {
     return;
   }
 
-  const api = new BotApi(config.botToken);
   const chatId = chatIdFor(config.channel);
 
   const sent = await api.call<{ message_id: number }>('sendMessage', {
@@ -61,6 +67,7 @@ async function main() {
     parse_mode: 'HTML',
     disable_web_page_preview: true,
     disable_notification: true,
+    reply_markup: kind.keyboard ? { inline_keyboard: kind.keyboard } : undefined,
   });
 
   await api.call('pinChatMessage', {

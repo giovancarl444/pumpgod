@@ -416,14 +416,22 @@ their own record, worst pick included.
 
   still qualifying (5 priced picks needed): @dave 2/5 · @erin 1/5
 
-  Median peak over every pick, wins and losses. One pick a day, by DM to the
-  bot. Picks are never posted in the channel — only what they did reaches
-  this table.
+  DM @pumpgodbot /submit <contract address> to enter.
+  Median peak over every pick, wins and losses. One pick a day. Picks are
+  never posted in the channel — only what they did reaches this table.
+
+  [ 🎯 Enter a pick ]
 ```
 
 The same table is pinned in the channel and edits itself, on the same machinery as the track
 record. That is the point of it: a leaderboard you have to message a bot to see is read only by
 the people already playing, and the people worth reaching are the ones who are not.
+
+It names the bot, and carries a button straight to it, because the table is read in the channel
+and answered in a DM — "DM the bot" pinned under a table asks a stranger to go and find it,
+which is where they stop. The button is re-sent on every edit: Telegram reads an edit carrying no
+markup as an edit *to* no markup, so a button that isn't repeated survives until the first time
+a price moves.
 
 ```bash
 npm run leaderboard            # preview it

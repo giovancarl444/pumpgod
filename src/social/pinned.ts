@@ -6,7 +6,7 @@ import { renderScoreboard } from '../format/scoreboard';
 import type { MemberHandlers } from '../pipeline/member';
 import { scoreboard } from '../track/stats';
 import type { TrackedCall } from '../track/tracker';
-import type { Peer, Transport } from '../telegram/transport';
+import type { Button, Peer, Transport } from '../telegram/transport';
 import { log } from '../log';
 
 export const STORE = resolve(ROOT, 'data/scoreboard.json');
@@ -24,6 +24,12 @@ export interface PinnedKind {
   script: string;
   /** `undefined` when there is nothing worth saying, which leaves the message as it was. */
   render(calls: TrackedCall[]): string | undefined;
+  /**
+   * Re-sent on every edit, because an edit carrying no markup is read by Telegram as an edit
+   * *to* no markup. Leave it off the refresh and the button survives exactly until the first
+   * time a price moves.
+   */
+  keyboard?: Button[][];
 }
 
 export const TRACK_RECORD: PinnedKind = {
@@ -42,11 +48,12 @@ export const TRACK_RECORD: PinnedKind = {
  * Renders even with nobody on it, unlike the track record: an empty table says how to enter,
  * and there is no claim in it to be premature about.
  */
-export function competitionBoard(member: MemberHandlers, comp: CompetitionConfig): PinnedKind {
+export function competitionBoard(member: MemberHandlers, comp: CompetitionConfig, bot?: string): PinnedKind {
   return {
     what: 'leaderboard',
     script: 'npm run leaderboard',
-    render: (calls) => renderLeaderboard(member.leaderboard(calls), comp),
+    render: (calls) => renderLeaderboard(member.leaderboard(calls), comp, bot),
+    keyboard: bot ? [[{ text: '🎯 Enter a pick', url: `https://t.me/${bot.replace(/^@/, '')}` }]] : undefined,
   };
 }
 
@@ -119,7 +126,7 @@ export class Pinned {
     if (!text || text === this.state.lastText) return;
 
     try {
-      await transport.edit(peer, this.state.messageId, text);
+      await transport.edit(peer, this.state.messageId, text, { keyboard: this.kind.keyboard });
       this.state.lastText = text;
       writePinned(this.state, this.store);
     } catch (err) {
