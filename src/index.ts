@@ -2,14 +2,12 @@ import { existsSync } from 'node:fs';
 import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH } from './config';
 import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
-import { attachIngest, type IncomingCommand } from './telegram/ingest';
-import { AdminCheck, deleteMessage } from './telegram/admin';
+import { attachIngest } from './telegram/ingest';
+import { AdminCheck } from './telegram/admin';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
-import { parseCommand, resolveManualCall } from './pipeline/manual';
-import { sendFast } from './telegram/send';
-import { escapeHtml } from './format/call';
+import { createCommandHandler } from './pipeline/command';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
 import { log } from './log';
@@ -86,69 +84,14 @@ async function main() {
   catchup.load();
 
   // `/signal <address>` publishes a coin of our own.
-  const admins = new AdminCheck(client, channelPeer);
-
-  // The war room takes every reply it can, because the public channel should carry calls and
-  // nothing else — a member scrolling past "✗ no pool found" learns only that we fumbled.
-  // With no war room configured there is nowhere else to answer, and silence after a command
-  // that deleted itself is worse than the clutter, so it goes back to the channel.
-  const say = async (text: string, cmd?: IncomingCommand) => {
-    const peer = warRoomPeer ?? (cmd?.fromChannel ? channelPeer : undefined);
-    if (!peer) return;
-    await sendFast(client, peer, text, { stage: 'send.warroom' }).catch(() => undefined);
-  };
-
-  const handleCommand = async (cmd: IncomingCommand) => {
-    const argument = parseCommand(cmd.text);
-    if (!argument) return;
-
-    if (cmd.fromChannel) {
-      if (!(await admins.allows(cmd))) {
-        log.warn(`ignored /signal from a non-admin in the channel (${cmd.fromId ?? 'unknown'})`);
-        return;
-      }
-      // Take the instruction down first. If resolving is slow, the channel should not be
-      // sitting there showing the command while it waits.
-      if (channelPeer) {
-        await deleteMessage(client, channelPeer, cmd.messageId).catch((err: Error) =>
-          log.debug(`could not delete the command message: ${err.message}`),
-        );
-      }
-    }
-
-    // Resolving market data first is what makes this callable at all: an address on its own
-    // has no numbers for the screen to read. Nobody is being raced, so the hop is free.
-    const outcome = await resolveManualCall(argument, Math.max(config.enrichTimeoutMs, 5000), config.chains);
-    if (!outcome.ok) {
-      log.warn(`manual call rejected: ${outcome.reason}`);
-      await say(`✗ ${escapeHtml(outcome.reason)}`, cmd);
-      return;
-    }
-
-    const ticker = outcome.call.ticker ? `$${escapeHtml(outcome.call.ticker)}` : 'that coin';
-    const decision = router.callManual(outcome.call, cmd.text, cmd.recvAt);
-
-    // Every branch answers. The command deleted itself on the way in, so an unreported
-    // decision leaves an admin unable to tell a screened coin from a bot that has died.
-    switch (decision.kind) {
-      case 'publishing':
-        if (!config.live) await say(`🔇 LIVE=false — ${ticker} was not published.`, cmd);
-        break;
-      case 'review':
-        await say(
-          `⚠️ ${ticker} was held back: ${escapeHtml(decision.reason)}.` +
-            (warRoomPeer ? ' Tap 🚀 on the card below to publish it anyway.' : ''),
-          cmd,
-        );
-        break;
-      case 'duplicate':
-        await say(`↩︎ ${ticker} was already called (${escapeHtml(decision.sources.join(', '))}).`, cmd);
-        break;
-      case 'dropped':
-        await say(`✗ ${ticker}: ${escapeHtml(decision.reason)}`, cmd);
-        break;
-    }
-  };
+  const handleCommand = createCommandHandler({
+    client,
+    config,
+    router,
+    admins: new AdminCheck(client, channelPeer),
+    channelPeer,
+    warRoomPeer,
+  });
 
   attachIngest(client, watched, { warRoomId, channelId }, {
     onMessage: (msg) => {
