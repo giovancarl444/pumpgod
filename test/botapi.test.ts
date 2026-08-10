@@ -37,6 +37,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('naming the server', () => {
+  // Telegram publish a self-hostable Bot API server, and pointing at one is also the only way
+  // to exercise boot → ingest → publish without a real token and a real channel.
+  it('talks to a self-hosted server when given one, and to Telegram otherwise', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        seen.push(url);
+        return { json: async () => ({ ok: true, result: {} }) } as Response;
+      }),
+    );
+
+    await new BotApi('123:SECRET', 10_000, 'http://127.0.0.1:8081').call('getMe');
+    await new BotApi('123:SECRET').call('getMe');
+
+    expect(seen[0]).toBe('http://127.0.0.1:8081/bot123:SECRET/getMe');
+    expect(seen[1]).toBe('https://api.telegram.org/bot123:SECRET/getMe');
+  });
+});
+
 describe('naming the chat', () => {
   // `.env` may carry any of the three spellings depending on whether setup wrote it or it was
   // typed by hand, and config strips the -100 prefix for its own keys. Get this wrong and the

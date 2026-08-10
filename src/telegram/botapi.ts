@@ -43,6 +43,12 @@ export class BotApi {
   constructor(
     private readonly token: string,
     private readonly timeoutMs = 10_000,
+    /**
+     * Telegram publish a self-hostable Bot API server, and pointing at one is the only way to
+     * exercise this path — boot, ingest, publish — without a real token and a real channel.
+     * Read at construction rather than at import, so `.env` has already been loaded.
+     */
+    private readonly base = process.env.TG_API_BASE?.trim() || BASE,
   ) {}
 
   async call<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
@@ -64,7 +70,7 @@ export class BotApi {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${BASE}/bot${this.token}/${method}`, {
+      const res = await fetch(`${this.base}/bot${this.token}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(params),
