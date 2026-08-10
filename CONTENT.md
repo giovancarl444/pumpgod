@@ -151,6 +151,57 @@ before there is a record.
 **Why this is good content and not navel-gazing:** it is proof the numbers are not curated. A
 group inventing its record does not publish the story of the bug that made its record look better.
 
+### 3.5 The day our own leaderboard was fiction
+
+*The strongest post here, and it costs nothing to publish because we caught it before anyone saw
+the number. Hold it until the measurement is public, then lead with it.*
+
+> Our first real measurement finished last night: 71 calls, 76 channels, every entry priced off
+> the chart at the minute it was posted.
+>
+> The top of the leaderboard read like this.
+>
+> ```
+> 8293x   7139x   6915x   6259x   6186x   3380x   3225x   3191x
+> ```
+>
+> Eight channels. Eight different sources, independently ranked, sitting at the top of a list
+> nobody had touched. Any one of them alone we might have believed for a second.
+>
+> They were all the same coin. And it never happened.
+>
+> The coin was worth $229,000. One pool claimed $1.07bn of liquidity and a $1.43bn market cap —
+> off **one transaction** in twenty-four hours. The pool people were actually trading in was a
+> different one entirely: $35k deep, fourteen thousand trades, priced where you'd expect. We
+> already knew to prefer the busy pool over the loud one; the code that builds a call card ranks
+> by traded volume for exactly this reason, and it got this coin right.
+>
+> The code that re-prices a call afterwards was written separately, and ranked by advertised
+> depth. So the entry price was correct and every price after it came from the fiction. Nothing
+> errored. Nothing looked out of place except the size of the number, and a leaderboard of a
+> memecoin market is not a place where a big number looks out of place.
+>
+> Same night, a different coin: we recorded an entry of **$772.97** on a token that costs
+> $0.000119. Six and a half million times over. The pool was `SPY / SPX6900` and the chart quoted
+> the SPY side — a real price, current, for the wrong asset. That row was flagged as *verified
+> against the chart*, which is our own highest confidence marker.
+>
+> Both are fixed, both have tests that fail if anyone reintroduces them, and there is now a
+> command that reads every recorded number back off the chart and reports where our record
+> disagrees with it. We run it on ourselves.
+>
+> The reason to tell you this: those eight numbers would have been the first evidence we ever
+> published. They were the most flattering thing our system had produced and they were false, and
+> the only reason they were caught is that somebody read the output instead of the summary.
+>
+> Ask any group showing you a 6,000x how they checked it. There is a real answer to that question
+> and most of them do not have one.
+
+**Why this one is the best of them:** every other group's proof is a screenshot. This is the
+opposite — it is us publishing the moment our own numbers were spectacular and wrong, before a
+single person had seen them. It cannot be faked by someone who is faking, because someone who is
+faking has no reason to ever look this hard, and no reason to admit it if they did.
+
 ---
 
 ## 4. Tier 1 — needs the shadow data (days away, running now)
