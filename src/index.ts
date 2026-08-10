@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import {
+  loadBroadcast,
   loadCompetition,
   loadConfig,
   loadPromo,
@@ -10,6 +11,7 @@ import {
   type AppConfig,
 } from './config';
 import { createAgent } from './agent/agent';
+import { Broadcast } from './social/broadcast';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
 import { PickAlerts } from './social/alerts';
@@ -75,6 +77,12 @@ function startReceipts(
   for (const board of boards) board.load();
   extras.alerts?.load();
 
+  // The one thing here that speaks without being asked. Gated twice — on `live` above and on
+  // its own flag — because the others answer a call that already exists, and this starts a
+  // message that does not.
+  const broadcast = new Broadcast({ enabled: loadBroadcast() });
+  broadcast.load();
+
   log.info(`receipts on · milestones answer their own call${pinned.live ? ' · track record self-updating' : ''}`);
 
   return setInterval(() => {
@@ -82,6 +90,7 @@ function startReceipts(
     void followups.run(transport, calls);
     if (extras.alerts) void extras.alerts.run(transport, calls);
     if (channelPeer) for (const board of boards) void board.refresh(transport, channelPeer, calls);
+    if (channelPeer) void broadcast.run(transport, channelPeer, calls);
   }, config.trackIntervalMs);
 }
 

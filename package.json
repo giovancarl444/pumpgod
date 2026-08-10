@@ -23,7 +23,8 @@
     "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
     "scoreboard": "tsx scripts/scoreboard.ts",
-    "leaderboard": "tsx scripts/leaderboard.ts"
+    "leaderboard": "tsx scripts/leaderboard.ts",
+    "digest": "tsx scripts/digest.ts"
   },
   "engines": {
     "node": ">=18.14.0"

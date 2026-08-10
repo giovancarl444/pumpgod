@@ -246,6 +246,20 @@ export function loadSocial(): SocialConfig {
 }
 
 /**
+ * Whether the agent may post into the channel unprompted.
+ *
+ * Off by default, and more emphatically than the other flags here. Everything else the agent
+ * does is a reply to somebody, where the worst case is one unhelpful answer; this writes to the
+ * channel on a timer, from a daemon that restarts on every source edit. A default of `true`
+ * would mean the first save after adding the feature posted to the live channel.
+ *
+ * See `src/social/broadcast.ts` for the other two conditions it has to clear.
+ */
+export function loadBroadcast(): boolean {
+  return bool('AGENT_BROADCAST', false);
+}
+
+/**
  * A bot token and a user session are alternatives, not a pair: the bot publishes, and only a
  * user account can read a rival group. Requiring the my.telegram.org credentials up front would
  * make the cheap half of the setup wait on the expensive one.
