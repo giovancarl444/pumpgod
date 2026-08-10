@@ -1,9 +1,10 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { applyQuote, Tracker, type TrackedCall } from '../src/track/tracker';
+import { pacing } from '../src/pipeline/history';
 
 const T0 = 1_700_000_000_000;
 
@@ -155,5 +156,153 @@ describe('applyQuote', () => {
 
     applyQuote(c, { priceUsd: 0.004, liquidityUsd: 20_000 }, T0 + 3000);
     expect(c.entryPriceUsd).toBe(0.004);
+  });
+});
+
+/**
+ * A scraped call is only measured once its peak is known, and for a long time nothing knew it.
+ *
+ * `npm run shadow` records rival calls with an entry price read off the chart at the minute they
+ * were posted. The peak has to come later, from the same chart. The daemon does that for its own
+ * calls inside `poll()` — but it polls the map it loaded at startup, and `merged()` folds the
+ * file back in only when *writing*. So a row another process appended survived every save and
+ * still never got polled, never retired, and never priced.
+ *
+ * Nothing about that looks wrong from either side. The scraper reports rows recorded, the file
+ * grows, every entry price is present and correct — and `PRICED` on the scorecard stays at zero
+ * for as long as the daemon stays up. Two weeks of measurement would have ranked nobody.
+ */
+describe('pricing the peak of a call the daemon never held', () => {
+  const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9';
+  const DAY = 24 * 60 * 60 * 1000;
+
+  function scraped(overrides: Partial<TrackedCall> = {}): TrackedCall {
+    return call({
+      id: 'shadow-tg:rival-1',
+      sourceId: 'tg:rival',
+      outcome: 'shadow',
+      entryPriceUsd: 0.001,
+      entryMcUsd: 100_000,
+      poolAddress: POOL,
+      ...overrides,
+    });
+  }
+
+  /** Newest first, as GeckoTerminal sends it: [seconds, o, h, l, c, v]. */
+  function serveHigh(high: number): void {
+    pacing.gapMs = 0;
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { attributes: { ohlcv_list: [[T0 / 1000 + 3600, high * 0.9, high, high * 0.8, high, 1]] } },
+      }),
+    }));
+  }
+
+  function loaded(rows: TrackedCall[]): Tracker {
+    const path = join(mkdtempSync(join(tmpdir(), 'pumpgod-settle-')), 'tracked.json');
+    writeFileSync(path, JSON.stringify(rows));
+    const t = new Tracker(path);
+    t.load();
+    return t;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('prices a scraped call once it is past the window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    serveHigh(0.004);
+
+    const tracker = loaded([scraped()]);
+    expect(await tracker.settleAged()).toBe(1);
+
+    const [row] = tracker.list();
+    // 0.001 in, 0.004 at the high: the 4x is the whole point of recording the call at all.
+    expect(row?.athPriceUsd).toBe(0.004);
+    expect(row?.athFromChart).toBe(true);
+    expect(row?.athMcUsd).toBe(400_000);
+  });
+
+  it('leaves a call still inside its window alone', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + 60_000);
+    serveHigh(0.004);
+
+    const tracker = loaded([scraped()]);
+    expect(await tracker.settleAged()).toBe(0);
+    expect(tracker.list()[0]?.athPriceUsd).toBeUndefined();
+    // Not retired either: the peak is still being set, and this pass must not close the book.
+    expect(tracker.list()[0]?.retired).toBeFalsy();
+  });
+
+  /**
+   * The rate limit is the reason this matters. A row the candle API refuses looks exactly like a
+   * coin with no history, so retrying it would spend the whole budget on the calls least likely
+   * to yield anything — every pass, forever, starving the ones that would.
+   */
+  it('tries each call once, even when the chart gives nothing back', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    pacing.gapMs = 0;
+    let requests = 0;
+    vi.stubGlobal('fetch', async () => {
+      requests++;
+      return { ok: false, status: 429, json: async () => ({}) };
+    });
+
+    const tracker = loaded([scraped()]);
+    await tracker.settleAged();
+    const afterFirst = requests;
+    await tracker.settleAged();
+
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(requests).toBe(afterFirst);
+    expect(tracker.list()[0]?.athPriceUsd).toBeUndefined();
+  });
+
+  it('drains a backlog across passes rather than in one burst', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    serveHigh(0.002);
+
+    const rows = Array.from({ length: 7 }, (_, i) =>
+      scraped({ id: `shadow-tg:rival-${i}`, address: `Addr${i}` }),
+    );
+    const tracker = loaded(rows);
+
+    expect(await tracker.settleAged(3)).toBe(3);
+    expect(await tracker.settleAged(3)).toBe(3);
+    expect(await tracker.settleAged(3)).toBe(1);
+    expect(await tracker.settleAged(3)).toBe(0);
+    expect(tracker.list().every((c) => c.athPriceUsd === 0.002)).toBe(true);
+  });
+
+  it('writes the peak to disk without dropping what another process added', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    serveHigh(0.005);
+
+    const path = join(mkdtempSync(join(tmpdir(), 'pumpgod-settle-')), 'tracked.json');
+    writeFileSync(path, JSON.stringify([scraped()]));
+    const tracker = new Tracker(path);
+    tracker.load();
+
+    // The daemon publishes one of its own while the shadow pass is mid-flight.
+    writeFileSync(
+      path,
+      JSON.stringify([scraped(), call({ id: 'ours', sourceId: 'manual', address: 'Ours' })]),
+    );
+
+    await tracker.settleAged();
+
+    const saved = JSON.parse(readFileSync(path, 'utf8')) as TrackedCall[];
+    expect(saved).toHaveLength(2);
+    expect(saved.find((c) => c.id === 'ours')).toBeDefined();
+    expect(saved.find((c) => c.id === 'shadow-tg:rival-1')?.athPriceUsd).toBe(0.005);
   });
 });

@@ -57,10 +57,16 @@ async function pass(handles: string[], tracker: Tracker, seen: Watched): Promise
 
   for (const r of results) if (r.recorded || r.fresh) console.log(line(r));
 
+  // Recording a call is only half of measuring one. Nothing else prices these: the daemon holds
+  // its own calls in memory and never loads the ones written here, so without this a scraped row
+  // keeps its entry price forever and the scorecard has nothing to rank. See `settleAged`.
+  const settled = await tracker.settleAged();
+
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   console.log(
     `\n  ${recorded} call(s) recorded from ${fresh} new post(s) across ${handles.length} channels in ${secs}s`,
   );
+  if (settled) console.log(`  ${settled} call(s) past 24h priced against the chart`);
   if (reasons.size) {
     console.log(
       `  passed over: ${[...reasons].sort((a, b) => b[1] - a[1]).map(([w, n]) => `${n} ${w}`).join(', ')}`,

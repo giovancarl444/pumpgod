@@ -352,6 +352,47 @@ export class Tracker {
     log.info(`${label} peaked ${missed.toFixed(2)}x higher than we sampled — corrected from the chart`);
   }
 
+  /**
+   * Prices the peak of every call that has aged out, straight from the chart.
+   *
+   * The daemon already does this for the calls it is holding, inside `poll()`. Nothing was doing
+   * it for the calls the scraper writes, and the reason is worth stating because it is invisible
+   * from either side: `merged()` folds the file back in at save time, so a row another process
+   * added survives — but it is never loaded into the running daemon's map, so it is never polled
+   * and never retired. A scraped call kept its entry price and never got a peak.
+   *
+   * The scorecard reads peaks. So the failure was that every pass reported success, every row
+   * looked complete, and `PRICED` stayed at zero for as long as the daemon happened to stay up —
+   * which is the same shape as the chain-slug bug and the entry-price fallback before it. The
+   * measurement would have run for two weeks and produced nothing rankable.
+   *
+   * Live polling is not the fix, and would have been the wrong one even if it worked. A scraped
+   * call is being *scored*, not traded: its peak is best read once off the candles, exactly,
+   * rather than sampled 1,440 times and still missed if the process blinked. One request per
+   * call for its entire life, instead of one a minute.
+   *
+   * Attempted once each, exactly as `due()` retires the daemon's own: a call we could not price
+   * stays unpriced rather than being retried against a rate limit on every pass forever. The
+   * cap is per pass, not total — a cold-start backlog drains over the following passes instead
+   * of arriving at the candle API as one burst.
+   */
+  async settleAged(limit = 25): Promise<number> {
+    const now = Date.now();
+    let priced = 0;
+    for (const call of this.calls.values()) {
+      if (priced >= limit) break;
+      if (call.retired || now - call.calledAt <= RETIRE_AFTER_MS) continue;
+      call.retired = true;
+      this.dirty = true;
+      // Nothing to read a chart with. Retired above regardless, so it is not reconsidered.
+      if (!call.poolAddress || !call.entryPriceUsd) continue;
+      await this.settle(call);
+      priced++;
+    }
+    this.persist();
+    return priced;
+  }
+
   private async poll(): Promise<void> {
     const { active, retiring } = this.due();
     // Sequential, and only ever a handful a day: the candle API allows ~30 requests a minute.
