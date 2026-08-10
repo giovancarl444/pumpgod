@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
+import { peakSince } from '../pipeline/history';
+import type { DexPair } from '../pipeline/dexscreener';
 import type { Chain, RiskLevel, Signal } from '../types';
 import { log } from '../log';
 
@@ -48,14 +50,10 @@ export interface TrackedCall {
   timeTo10xSec?: number;
   rugged?: boolean;
   retired?: boolean;
-}
-
-interface DexPair {
-  baseToken?: { address?: string; name?: string; symbol?: string };
-  priceUsd?: string;
-  marketCap?: number;
-  fdv?: number;
-  liquidity?: { usd?: number };
+  /** The pool we first saw this trading in, kept so the peak can be checked against candles. */
+  poolAddress?: string;
+  /** The peak was confirmed against the chart rather than left as whatever we sampled. */
+  athFromChart?: boolean;
 }
 
 /** Identity of the coin itself. EVM addresses are case-insensitive; Solana's are not. */
@@ -209,24 +207,63 @@ export class Tracker {
     this.persist();
   }
 
-  private active(): TrackedCall[] {
+  /** Calls still worth pricing, and the ones ageing out of the window on this pass. */
+  private due(): { active: TrackedCall[]; retiring: TrackedCall[] } {
     const now = Date.now();
-    const out: TrackedCall[] = [];
+    const active: TrackedCall[] = [];
+    const retiring: TrackedCall[] = [];
     for (const c of this.calls.values()) {
       if (c.retired) continue;
       if (now - c.calledAt > RETIRE_AFTER_MS) {
         c.retired = true;
         this.dirty = true;
+        retiring.push(c);
         continue;
       }
-      out.push(c);
+      active.push(c);
     }
-    return out;
+    return { active, retiring };
+  }
+
+  /**
+   * Replaces a sampled peak with the one the chart actually shows.
+   *
+   * Our own peak is the best of however many samples we managed to take, so downtime — or
+   * simply a restart — understates a run that happened in the gap. Done once, at the moment
+   * a call leaves the polling window, because that is when the number stops changing and
+   * starts being quoted.
+   *
+   * Only ever raises it. A candle high below what we watched happen means we are reading a
+   * different pool than we priced, and discarding a real observation for that is worse than
+   * keeping a conservative one.
+   */
+  private async settle(call: TrackedCall): Promise<void> {
+    if (!call.poolAddress || !call.entryPriceUsd) return;
+
+    const peak = await peakSince(call.chain, call.poolAddress, call.calledAt);
+    if (!peak) return;
+
+    call.athFromChart = true;
+    this.dirty = true;
+    if (peak.priceUsd <= (call.athPriceUsd ?? 0)) return;
+
+    // Market cap is scaled from entry rather than read off the candle, which carries price
+    // only. Supply is fixed for anything we call, so the ratio holds — and a figure derived
+    // the same way the multiple is derived cannot contradict it.
+    const missed = call.athPriceUsd ? peak.priceUsd / call.athPriceUsd : 1;
+    if (call.entryMcUsd) call.athMcUsd = (call.entryMcUsd * peak.priceUsd) / call.entryPriceUsd;
+    call.athPriceUsd = peak.priceUsd;
+    call.athAt = peak.at;
+
+    const label = call.ticker ? `$${call.ticker}` : call.address.slice(0, 8);
+    log.info(`${label} peaked ${missed.toFixed(2)}x higher than we sampled — corrected from the chart`);
   }
 
   private async poll(): Promise<void> {
-    const active = this.active();
-    if (!active.length) return;
+    const { active, retiring } = this.due();
+    // Sequential, and only ever a handful a day: the candle API allows ~30 requests a minute.
+    for (const call of retiring) await this.settle(call);
+    if (!active.length) return this.persist();
 
     // One request slot per coin, not per record. Every source that called a token holds its
     // own record, so a coin four groups shouted about would otherwise eat four of the thirty
@@ -272,6 +309,11 @@ export class Tracker {
   }
 
   private apply(call: TrackedCall, pair: DexPair): void {
+    // The pool as it was at call time, not whichever is deepest by the end. Liquidity can
+    // migrate mid-run, and only the original is guaranteed to hold candles for the whole
+    // window we need to read back.
+    call.poolAddress ??= pair.pairAddress;
+
     applyQuote(
       call,
       {
