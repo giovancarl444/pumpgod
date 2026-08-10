@@ -225,6 +225,39 @@ describe('quoting a slot', () => {
     expect(replies().at(-1)).toContain('already have an unpaid invoice');
   });
 
+  /**
+   * Telegram caps an invoice title at 32 characters and refuses the whole call over it.
+   *
+   * So an over-long symbol does not produce a cramped invoice, it produces no invoice at all —
+   * and the buyer is told only that something failed, gets the same failure every time they
+   * try again, and never learns why. The person promoting a coin they launched themselves is
+   * exactly the customer who has a symbol like this, which makes it the wrong sale to lose.
+   */
+  it('still sells a slot for a coin whose symbol is too long for a Telegram invoice', async () => {
+    market({ ...GOOD, baseToken: { ...GOOD.baseToken, symbol: 'MAXIMUM'.repeat(6) } });
+    const { onPromote } = handlers();
+    await promote(onPromote);
+
+    const invoice = invoices()[0];
+    expect(invoice, 'the sale was lost over the width of a name').toBeDefined();
+    expect(String(invoice!.params.title).length).toBeLessThanOrEqual(32);
+    expect(String(invoice!.params.title)).toContain('Promote $MAXIMUM');
+  });
+
+  // Cut on a character boundary, never through one. Half a surrogate pair is not valid text,
+  // and Telegram would refuse the request for that instead — the same lost sale, wearing a
+  // different error. Memecoin symbols are full of emoji, so this is the ordinary case.
+  it('cuts a symbol full of emoji without splitting one in half', async () => {
+    market({ ...GOOD, baseToken: { ...GOOD.baseToken, symbol: '🚀'.repeat(30) } });
+    const { onPromote } = handlers();
+    await promote(onPromote);
+
+    const title = String(invoices()[0]!.params.title);
+    expect(title.length).toBeLessThanOrEqual(32);
+    // A lone surrogate is what slicing mid-character leaves behind.
+    expect(/[\uD800-\uDFFF]/.test(title.replace(/\p{Emoji_Presentation}/gu, ''))).toBe(false);
+    expect(title).toContain('🚀');
+  });
 });
 
 describe('taking the payment', () => {

@@ -1,3 +1,4 @@
+import { clip } from '../format/text';
 import { log } from '../log';
 import type { BotApi } from './botapi';
 
@@ -14,6 +15,19 @@ import type { BotApi } from './botapi';
  * whoever is running the channel can look up what it should be.
  */
 export const STARS = 'XTR';
+
+/**
+ * Telegram's own limits on the two strings it shows the buyer, enforced here rather than left
+ * to whoever is selling something.
+ *
+ * `sendInvoice` rejects an over-long title outright, so a coin whose symbol runs long does not
+ * produce a cramped invoice — it produces **no invoice at all**, and a buyer who is told only
+ * that something failed and gets the identical failure every time they try again. A sale is
+ * never worth losing over the width of a product name, and a caller should not have to know
+ * these numbers to sell a slot.
+ */
+const TITLE_LIMIT = 32;
+const DESCRIPTION_LIMIT = 255;
 
 export interface InvoiceRequest {
   chatId: string;
@@ -33,13 +47,15 @@ export interface InvoiceRequest {
 export async function sendStarInvoice(api: BotApi, req: InvoiceRequest): Promise<number | undefined> {
   const msg = await api.call<{ message_id: number }>('sendInvoice', {
     chat_id: req.chatId,
-    title: req.title,
-    description: req.description,
+    title: clip(req.title, TITLE_LIMIT),
+    description: clip(req.description, DESCRIPTION_LIMIT),
     payload: req.payload,
     currency: STARS,
     // A Stars invoice carries exactly one price line, and its `amount` is a whole number of
-    // Stars rather than the hundredths every other currency here would be counted in.
-    prices: [{ label: req.label ?? req.title, amount: req.stars }],
+    // Stars rather than the hundredths every other currency here would be counted in. The
+    // label carries no documented limit, so it is held to the title's — it sits next to the
+    // title on the same checkout, and one of the two running twice as wide reads as a bug.
+    prices: [{ label: clip(req.label ?? req.title, TITLE_LIMIT), amount: req.stars }],
   });
   return msg.message_id;
 }

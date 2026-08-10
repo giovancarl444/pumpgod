@@ -1,4 +1,5 @@
 import type { Stats } from '../types';
+import { clip } from '../format/text';
 import { log } from '../log';
 
 export interface DexPair {
@@ -121,8 +122,9 @@ const TEXT_LIMIT = 48;
  *   a contract address is exactly where that must not work.
  * - **Newlines collapse.** These are printed inline. A name containing one rewrites the shape
  *   of the card around it and can forge a line we did not write.
- * - **Length is capped.** The field is unbounded and a Telegram message is not, so without this
- *   a sufficiently long name is a coin that stops our channel from posting.
+ * - **Length is capped**, on character boundaries. The field is unbounded and a Telegram message
+ *   is not, so without this a sufficiently long name is a coin that stops our channel from
+ *   posting — and cutting one of its emoji in half would do the same thing for a subtler reason.
  */
 export function tokenText(value: string | undefined): string | undefined {
   const cleaned = value
@@ -134,7 +136,7 @@ export function tokenText(value: string | undefined): string | undefined {
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return undefined;
-  return cleaned.length > TEXT_LIMIT ? `${cleaned.slice(0, TEXT_LIMIT - 1).trimEnd()}…` : cleaned;
+  return clip(cleaned, TEXT_LIMIT);
 }
 
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {

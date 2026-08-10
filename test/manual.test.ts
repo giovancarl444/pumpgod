@@ -154,6 +154,27 @@ describe('resolveManualCall', () => {
     expect(out.call.name!.length).toBeLessThanOrEqual(48);
   });
 
+  /**
+   * Cutting a name to length must not cut a character in half.
+   *
+   * Every emoji is two UTF-16 units, so a plain `slice` can land between them and leave a lone
+   * surrogate — not a character, not valid text, and not something that survives being encoded
+   * on the way to Telegram. Names like this are ordinary rather than adversarial: they are
+   * chosen to catch the eye, which in practice means long and full of emoji.
+   */
+  it('cuts a name between characters, never through one', async () => {
+    const name = `${'🚀'.repeat(30)} to the moon`;
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name, symbol: 'BONK' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    const cut = out.call.name!;
+    expect(cut.length).toBeLessThanOrEqual(48);
+    // A lone surrogate is exactly what slicing through an emoji leaves behind, and it is
+    // invisible in any output you would print to check.
+    expect([...cut].every((c) => c.codePointAt(0)! < 0xd800 || c.codePointAt(0)! > 0xdfff)).toBe(true);
+  });
+
   it('trusts an address a human typed out — nothing is more deliberate', async () => {
     dex([[`/tokens/${TOKEN}`, [pair()]]]);
     const out = await resolveManualCall(TOKEN, 2000);
