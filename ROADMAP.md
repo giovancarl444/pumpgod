@@ -42,6 +42,14 @@ The signal machine. Full reasoning lives in `ENGINE.md`; this is the checklist v
       chart at that minute. No login, no joining, nothing bannable — and a call found two hours
       late scores exactly as it would have live, which is what makes the account risk deferrable
       to the two or three groups a real record eventually justifies
+- [x] **Every recorded number checkable against the chart** (`npm run audit`). Reads each entry
+      and peak back off the candles and reports where the record disagrees; `--fix` adopts the
+      chart. This is the product's own claim run against itself, and the only check here that
+      does not depend on our code being right — the candles come from somewhere else and were
+      written by trades. It exists because the four bugs found so far all reported success and
+      returned a plausible number, and every one of them was caught by a person happening to
+      think a figure looked large. Dry by default; refuses to write under a running daemon
+      rather than half-landing a repair
 
 ## 1.2 On-chain safety — shipped this session
 
