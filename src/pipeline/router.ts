@@ -1,10 +1,8 @@
-import { Api, TelegramClient } from 'telegram';
 import type { AppConfig } from '../config';
 import type { ParsedCall, Signal, Source } from '../types';
 import { parseCall } from '../parse';
 import { renderPublicCall, renderWarRoomCall } from '../format/call';
-import { editFast, sendFast } from '../telegram/send';
-import { sendPhoto } from '../telegram/photo';
+import type { Peer, Transport } from '../telegram/transport';
 import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
@@ -80,10 +78,10 @@ export class Router {
   private counter = 0;
 
   constructor(
-    private readonly client: TelegramClient,
+    private readonly transport: Transport,
     private readonly config: AppConfig,
-    private readonly channelPeer: Api.TypeInputPeer | undefined,
-    private readonly warRoomPeer: Api.TypeInputPeer | undefined,
+    private readonly channelPeer: Peer | undefined,
+    private readonly warRoomPeer: Peer | undefined,
     private readonly tracker?: Tracker,
   ) {
     this.dedupe = new Dedupe(config.dedupeTtlMs);
@@ -269,11 +267,11 @@ export class Router {
       // racing somebody on. That is the right trade in both directions.
       const image = this.config.showImage ? signal.call.imageUrl : undefined;
       const sent = image
-        ? await sendPhoto(this.client, this.channelPeer, image, html, {
+        ? await this.transport.sendPhoto(this.channelPeer, image, html, {
             stage: 'send.public',
             timeoutMs: this.config.enrichTimeoutMs,
           })
-        : await sendFast(this.client, this.channelPeer, html, { stage: 'send.public' });
+        : await this.transport.send(this.channelPeer, html, { stage: 'send.public' });
 
       signal.timings.dispatchAt = sent.dispatchAt;
       signal.timings.ackAt = sent.ackAt;
@@ -314,12 +312,7 @@ export class Router {
     }
 
     try {
-      await editFast(
-        this.client,
-        this.channelPeer,
-        messageId,
-        renderPublicCall(enriched, this.config),
-      );
+      await this.transport.edit(this.channelPeer, messageId, renderPublicCall(enriched, this.config));
     } catch (err) {
       log.debug('enrich edit skipped', (err as Error).message);
     }
@@ -332,7 +325,7 @@ export class Router {
     }
 
     try {
-      const sent = await sendFast(this.client, this.warRoomPeer, renderWarRoomCall(signal, this.config), {
+      const sent = await this.transport.send(this.warRoomPeer, renderWarRoomCall(signal, this.config), {
         stage: 'send.warroom',
       });
       if (sent.messageId) this.staged.set(sent.messageId, { signal, stagedAt: Date.now(), fired: false });

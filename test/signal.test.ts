@@ -5,6 +5,7 @@ import { Router } from '../src/pipeline/router';
 import { AdminCheck } from '../src/telegram/admin';
 import { attachIngest } from '../src/telegram/ingest';
 import { peerIdOf } from '../src/telegram/client';
+import { MtprotoTransport, mtprotoPeer } from '../src/telegram/mtproto';
 import { journal } from '../src/store/journal';
 import type { AppConfig } from '../src/config';
 
@@ -119,16 +120,19 @@ function config(over: Partial<AppConfig> = {}): AppConfig {
 function bot(over: Partial<AppConfig> = {}, participant?: Api.TypeChannelParticipant) {
   const { client, log } = wire(participant);
   const cfg = config(over);
-  const router = new Router(client, cfg, CHANNEL, cfg.warRoom ? WAR_ROOM : undefined, undefined);
+  const transport = new MtprotoTransport(client);
+  const channelPeer = mtprotoPeer(CHANNEL);
+  const warRoomPeer = cfg.warRoom ? mtprotoPeer(WAR_ROOM) : undefined;
+  const router = new Router(transport, cfg, channelPeer, warRoomPeer, undefined);
 
   const settled: Array<Promise<void>> = [];
   const handleCommand = createCommandHandler({
-    client,
+    transport,
     config: cfg,
     router,
     admins: new AdminCheck(client, CHANNEL),
-    channelPeer: CHANNEL,
-    warRoomPeer: cfg.warRoom ? WAR_ROOM : undefined,
+    channelPeer,
+    warRoomPeer,
   });
 
   const onUpdate = attachIngest(

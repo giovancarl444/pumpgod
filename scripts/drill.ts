@@ -2,6 +2,7 @@ import { Api, TelegramClient } from 'telegram';
 import { loadConfig, loadSources, normalisePeerId, type AppConfig } from '../src/config';
 import { createClient, peerIdOf, primeEntityCache, resolveInputPeer } from '../src/telegram/client';
 import { attachIngest, type IncomingMessage } from '../src/telegram/ingest';
+import { MtprotoTransport, mtprotoPeer } from '../src/telegram/mtproto';
 import { sendFast } from '../src/telegram/send';
 import { Router, passesFilters } from '../src/pipeline/router';
 import { assess } from '../src/pipeline/risk';
@@ -285,7 +286,7 @@ async function main(): Promise<number> {
   const drillConfig: AppConfig = { ...config, live: true, enrichEnabled: false };
 
   const watch = new DrillWatch();
-  const router = new Router(client, drillConfig, destPeer, undefined, watch);
+  const router = new Router(new MtprotoTransport(client), drillConfig, mtprotoPeer(destPeer), undefined, watch);
 
   let detected: IncomingMessage | undefined;
   const onUpdate = attachIngest(client, new Map([[targetKey, drillSource]]), {}, {

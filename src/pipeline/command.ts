@@ -1,20 +1,18 @@
-import { Api, TelegramClient } from 'telegram';
 import type { AppConfig } from '../config';
 import { escapeHtml } from '../format/call';
-import { AdminCheck, deleteMessage } from '../telegram/admin';
 import type { IncomingCommand } from '../telegram/ingest';
-import { sendFast } from '../telegram/send';
+import type { Admins, Peer, Transport } from '../telegram/transport';
 import { log } from '../log';
 import { parseCommand, resolveManualCall } from './manual';
 import type { Router } from './router';
 
 export interface CommandDeps {
-  client: TelegramClient;
+  transport: Transport;
   config: AppConfig;
   router: Router;
-  admins: AdminCheck;
-  channelPeer?: Api.TypeInputPeer;
-  warRoomPeer?: Api.TypeInputPeer;
+  admins: Admins;
+  channelPeer?: Peer;
+  warRoomPeer?: Peer;
 }
 
 /**
@@ -27,7 +25,7 @@ export interface CommandDeps {
  * nothing but the Telegram socket and the market.
  */
 export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) => Promise<void> {
-  const { client, config, router, admins, channelPeer, warRoomPeer } = deps;
+  const { transport, config, router, admins, channelPeer, warRoomPeer } = deps;
 
   // The war room takes every reply it can, because the public channel should carry calls and
   // nothing else — a member scrolling past "✗ no pool found" learns only that we fumbled.
@@ -36,7 +34,7 @@ export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) 
   const say = async (text: string, cmd: IncomingCommand) => {
     const peer = warRoomPeer ?? (cmd.fromChannel ? channelPeer : undefined);
     if (!peer) return;
-    await sendFast(client, peer, text, { stage: 'send.warroom' }).catch(() => undefined);
+    await transport.send(peer, text, { stage: 'send.warroom' }).catch(() => undefined);
   };
 
   return async (cmd: IncomingCommand) => {
@@ -51,7 +49,7 @@ export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) 
       // Take the instruction down first. If resolving is slow, the channel should not be
       // sitting there showing the command while it waits.
       if (channelPeer) {
-        await deleteMessage(client, channelPeer, cmd.messageId).catch((err: Error) =>
+        await transport.delete(channelPeer, cmd.messageId).catch((err: Error) =>
           log.debug(`could not delete the command message: ${err.message}`),
         );
       }
@@ -77,9 +75,11 @@ export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) 
         // The card carries the flag itself, so repeating it is only worth doing somewhere
         // private — saying it in the channel would tell members what they can already read.
         else if (decision.flagged && warRoomPeer) {
-          await sendFast(client, warRoomPeer, `🚨 ${ticker} published anyway — ${escapeHtml(decision.flagged)}`, {
-            stage: 'send.warroom',
-          }).catch(() => undefined);
+          await transport
+            .send(warRoomPeer, `🚨 ${ticker} published anyway — ${escapeHtml(decision.flagged)}`, {
+              stage: 'send.warroom',
+            })
+            .catch(() => undefined);
         }
         break;
       case 'review':

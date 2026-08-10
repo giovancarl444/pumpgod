@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Api, TelegramClient, helpers } from 'telegram';
 import { Router } from '../src/pipeline/router';
+import { MtprotoTransport, mtprotoPeer } from '../src/telegram/mtproto';
 import { Tracker } from '../src/track/tracker';
 import type { AppConfig } from '../src/config';
 import type { ParsedCall, Source } from '../src/types';
@@ -74,7 +75,9 @@ function harness(overrides: Partial<AppConfig> = {}, tracker?: Tracker) {
     ...overrides,
   };
 
-  return { router: new Router(client, config, CHANNEL, WAR_ROOM, tracker), sent, edits };
+  const transport = new MtprotoTransport(client);
+  const router = new Router(transport, config, mtprotoPeer(CHANNEL), mtprotoPeer(WAR_ROOM), tracker);
+  return { router, sent, edits };
 }
 
 /** A Tracker pointed at a throwaway file. Never the real store: a call's peak can only be

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH } from './config';
 import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
+import { MtprotoTransport } from './telegram/mtproto';
 import { attachIngest } from './telegram/ingest';
 import { AdminCheck } from './telegram/admin';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
@@ -42,10 +43,11 @@ async function main() {
 
   await primeEntityCache(client);
 
-  const channelPeer = config.channel ? await resolveInputPeer(client, config.channel) : undefined;
-  const warRoomPeer = config.warRoom ? await resolveInputPeer(client, config.warRoom) : undefined;
-  const warRoomId = warRoomPeer ? peerIdOf(warRoomPeer) : undefined;
-  const channelId = channelPeer ? peerIdOf(channelPeer) : undefined;
+  const transport = new MtprotoTransport(client);
+  const channelPeer = config.channel ? await transport.resolve(config.channel) : undefined;
+  const warRoomPeer = config.warRoom ? await transport.resolve(config.warRoom) : undefined;
+  const warRoomId = warRoomPeer?.id;
+  const channelId = channelPeer?.id;
 
   // Resolving every source up front means the hot path is a single Map lookup on an id
   // we already hold, with no chance of a mid-call network resolution.
@@ -79,16 +81,16 @@ async function main() {
   tracker.load();
   tracker.start(config.trackIntervalMs);
 
-  const router = new Router(client, config, channelPeer, warRoomPeer, tracker);
+  const router = new Router(transport, config, channelPeer, warRoomPeer, tracker);
   const catchup = new Catchup(client);
   catchup.load();
 
   // `/signal <address>` publishes a coin of our own.
   const handleCommand = createCommandHandler({
-    client,
+    transport,
     config,
     router,
-    admins: new AdminCheck(client, channelPeer),
+    admins: new AdminCheck(client, channelPeer?.input),
     channelPeer,
     warRoomPeer,
   });
