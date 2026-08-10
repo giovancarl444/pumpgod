@@ -156,6 +156,22 @@ function key(sourceId: string, chain: Chain, address: string): string {
   return `${sourceId}:${coinKey(chain, address)}`;
 }
 
+/**
+ * Which of two copies of one call holds the peak worth keeping.
+ *
+ * A peak read off the chart wins over one built from samples, whichever way round the sizes
+ * fall. The chart covers every minute of the window; a sample covers the minutes a process
+ * happened to be looking, and is a lower bound on a good day and a fiction on a bad one. Where
+ * neither has been settled the larger wins, because a moment either process saw did happen.
+ *
+ * Exported for the test that pins it. The rule is only visible when two processes are running,
+ * which is exactly when nobody is watching it.
+ */
+export function bestPeak<T extends { athPriceUsd?: number; athFromChart?: boolean }>(a: T, b: T): T {
+  if (a.athFromChart !== b.athFromChart) return a.athFromChart ? a : b;
+  return (a.athPriceUsd ?? 0) > (b.athPriceUsd ?? 0) ? a : b;
+}
+
 export interface Quote {
   priceUsd?: number;
   mcUsd?: number;
@@ -511,6 +527,7 @@ export class Tracker {
     return [...this.calls.values()];
   }
 
+
   /**
    * What we hold, folded together with what is already on disk.
    *
@@ -523,8 +540,18 @@ export class Tracker {
    * Collisions are not a worry: a key is `sourceId + chain + address`, and the two processes
    * write disjoint sources (`tg:*` for scraped channels, ours for ours). So a key on both
    * sides is one record seen twice, and the copy checked more recently holds the newer price.
-   * The peak is taken as the larger of the two either way, since it is a running maximum and
-   * the one number here that cannot be recovered by looking again.
+   *
+   * The peak needs its own rule, because it is a running maximum rather than a reading — the
+   * later copy of it is not the better one. Between two *sampled* peaks the larger wins: each
+   * is the best of the moments that process happened to look, and a moment either of them saw
+   * really happened. But a peak read off the chart is not a sample at all. It covers the whole
+   * window at once, so it beats any sample regardless of size, and a sample cannot be allowed
+   * to overrule it merely by being bigger.
+   *
+   * Without that second clause a corrected number does not stay corrected. A process holds
+   * every row it has loaded for as long as it runs, so an overnight `npm run shadow` would go
+   * on re-writing its own stale peak over the daemon's chart-settled one, every save, for as
+   * long as the loop lived — the fiction outliving not just the bug but the fix.
    *
    * Nothing in this class ever deletes a record, so folding disk back in cannot resurrect
    * something that was meant to be gone.
@@ -548,12 +575,18 @@ export class Tracker {
         continue;
       }
       const fresher = (theirs.lastCheckedAt ?? 0) > (ours.lastCheckedAt ?? 0) ? theirs : ours;
-      const higher = (theirs.athPriceUsd ?? 0) > (ours.athPriceUsd ?? 0) ? theirs : ours;
+      const peak = bestPeak(theirs, ours);
       out.set(
         k,
-        higher === fresher
+        peak === fresher
           ? fresher
-          : { ...fresher, athPriceUsd: higher.athPriceUsd, athMcUsd: higher.athMcUsd, athAt: higher.athAt },
+          : {
+              ...fresher,
+              athPriceUsd: peak.athPriceUsd,
+              athMcUsd: peak.athMcUsd,
+              athAt: peak.athAt,
+              athFromChart: peak.athFromChart,
+            },
       );
     }
     return [...out.values()];

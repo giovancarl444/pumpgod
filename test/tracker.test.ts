@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { applyQuote, Tracker, type TrackedCall } from '../src/track/tracker';
+import { applyQuote, bestPeak, Tracker, type TrackedCall } from '../src/track/tracker';
 import { pacing } from '../src/pipeline/history';
 
 const T0 = 1_700_000_000_000;
@@ -341,6 +341,46 @@ describe('pricing the peak of a call the daemon never held', () => {
     expect(saved).toHaveLength(2);
     expect(saved.find((c) => c.id === 'ours')).toBeDefined();
     expect(saved.find((c) => c.id === 'shadow-tg:rival-1')?.athPriceUsd).toBe(0.005);
+  });
+});
+
+/**
+ * Two processes write this file, and each holds every row it loaded for as long as it runs.
+ *
+ * That is what makes this rule load-bearing rather than housekeeping. An overnight
+ * `npm run shadow` keeps a stale copy of a call the daemon has since settled off the chart, and
+ * under a plain "larger peak wins" it would re-write its own sample over the corrected number
+ * on every save, for as long as the loop lived — a correction that does not stay corrected,
+ * which is worse than no correction at all because it looks like one.
+ */
+describe('folding two processes’ copies of a peak together', () => {
+  const sampled = { athPriceUsd: 1.43 };
+  const settled = { athPriceUsd: 0.0002, athFromChart: true };
+
+  it('prefers the chart over a larger sample', () => {
+    expect(bestPeak(sampled, settled)).toBe(settled);
+    expect(bestPeak(settled, sampled)).toBe(settled);
+  });
+
+  it('prefers the larger when neither has been settled', () => {
+    const small = { athPriceUsd: 0.001 };
+    expect(bestPeak(sampled, small)).toBe(sampled);
+    expect(bestPeak(small, sampled)).toBe(sampled);
+  });
+
+  /**
+   * Both read the same candles, so they should agree; where they do not, one ran before a
+   * further high and the window only ever grows.
+   */
+  it('prefers the larger when both came from the chart', () => {
+    const later = { athPriceUsd: 0.9, athFromChart: true };
+    expect(bestPeak(settled, later)).toBe(later);
+  });
+
+  it('treats a call nobody has priced as the lesser', () => {
+    const blank = {};
+    expect(bestPeak(blank, sampled)).toBe(sampled);
+    expect(bestPeak(blank, settled)).toBe(settled);
   });
 });
 
