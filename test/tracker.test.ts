@@ -282,6 +282,43 @@ describe('pricing the peak of a call the daemon never held', () => {
     expect(tracker.list().every((c) => c.athPriceUsd === 0.002)).toBe(true);
   });
 
+  /**
+   * The sampled peak is normally the one worth keeping, so this pair has to stay a pair: the
+   * chart is allowed to overrule a sample only when the two are further apart than two real
+   * pools of one coin can be. Below that, a lower candle high means the run happened somewhere
+   * the chart is not quoting, and throwing away a real observation for it would understate us.
+   */
+  it('keeps a sampled peak the chart merely fails to confirm', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    serveHigh(0.004);
+
+    const tracker = loaded([scraped({ athPriceUsd: 0.006, athMcUsd: 600_000 })]);
+    await tracker.settleAged();
+
+    expect(tracker.list()[0]?.athPriceUsd).toBe(0.006);
+  });
+
+  /**
+   * PARKIFY. A peak sampled off a pool advertising $1.07bn against a coin worth $229k, which the
+   * chart puts 6,190x lower. The old rule only ever raised the peak, so the fiction would have
+   * outlived the bug that produced it — quoted forever on a record whose one claim is that the
+   * chart agrees with it.
+   */
+  it('takes the chart over a sample the chart flatly contradicts', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0 + DAY + 60_000);
+    serveHigh(0.002);
+
+    const tracker = loaded([scraped({ athPriceUsd: 1.43, athMcUsd: 1_431_035_025 })]);
+    await tracker.settleAged();
+
+    const [row] = tracker.list();
+    expect(row?.athPriceUsd).toBe(0.002);
+    // Scaled from the entry, so the market cap cannot be left describing the price we dropped.
+    expect(row?.athMcUsd).toBe(200_000);
+  });
+
   it('writes the peak to disk without dropping what another process added', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(T0 + DAY + 60_000);

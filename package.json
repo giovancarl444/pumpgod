@@ -22,6 +22,7 @@
     "recap": "tsx scripts/recap.ts",
     "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
+    "audit": "tsx scripts/audit.ts",
     "scoreboard": "tsx scripts/scoreboard.ts",
     "leaderboard": "tsx scripts/leaderboard.ts",
     "digest": "tsx scripts/digest.ts"

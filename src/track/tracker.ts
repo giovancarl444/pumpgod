@@ -18,6 +18,19 @@ const RETIRE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** Below this, the pool is gone in any practical sense. */
 const RUG_LIQUIDITY_USD = 500;
 
+/**
+ * How far a sampled peak may sit above the chart before we stop believing our own sample.
+ *
+ * Two live pools of one token are dragged together by anyone willing to arbitrage them, so they
+ * disagree by percent, not by multiples. Ten times apart is not two honest quotes — it is one
+ * of them being wrong, and the sampled side is the one with no candles behind it. See `settle`.
+ *
+ * Exported so `npm run audit` applies the same rule to rows already written. A row poisoned
+ * before this existed cannot fix itself: the peak only ever climbed, so the fiction outlived
+ * the bug. One threshold, or the audit and the tracker disagree about what a bad number is.
+ */
+export const CONTRADICTED = 10;
+
 export type Outcome =
   | 'called'
   | 'staged'
@@ -327,9 +340,17 @@ export class Tracker {
    * a call leaves the polling window, because that is when the number stops changing and
    * starts being quoted.
    *
-   * Only ever raises it. A candle high below what we watched happen means we are reading a
-   * different pool than we priced, and discarding a real observation for that is worse than
-   * keeping a conservative one.
+   * Normally only raises it. A candle high a little below what we watched happen means the run
+   * was sampled in a pool the chart is not quoting, and discarding a real observation for that
+   * is worse than keeping a conservative one.
+   *
+   * Past `CONTRADICTED` that reasoning inverts, and the word "conservative" changes sides. Two
+   * live pools of one token are held together by anybody willing to arbitrage them, so they do
+   * not sit orders of magnitude apart — a sample that far above the chart is not a pool we
+   * failed to quote, it is a number that was never true. Keeping the larger of two readings
+   * that disagree like that is not caution, it is picking the one that flatters us. PARKIFY
+   * sampled a peak 6,190x its chart, and the rule as written would have made that permanent:
+   * a fiction, quoted, on a record whose entire claim is that the chart agrees with it.
    */
   private async settle(call: TrackedCall): Promise<void> {
     if (!call.poolAddress || !call.entryPriceUsd) return;
@@ -340,18 +361,24 @@ export class Tracker {
 
     call.athFromChart = true;
     this.dirty = true;
-    if (peak.priceUsd <= (call.athPriceUsd ?? 0)) return;
+
+    const sampled = call.athPriceUsd ?? 0;
+    const label = call.ticker ? `$${call.ticker}` : call.address.slice(0, 8);
+
+    if (sampled > peak.priceUsd * CONTRADICTED) {
+      log.warn(`${label} sampled a peak ${(sampled / peak.priceUsd).toFixed(0)}x above its own chart — taking the chart`);
+    } else if (peak.priceUsd <= sampled) {
+      return;
+    } else if (sampled) {
+      log.info(`${label} peaked ${(peak.priceUsd / sampled).toFixed(2)}x higher than we sampled — corrected from the chart`);
+    }
 
     // Market cap is scaled from entry rather than read off the candle, which carries price
     // only. Supply is fixed for anything we call, so the ratio holds — and a figure derived
     // the same way the multiple is derived cannot contradict it.
-    const missed = call.athPriceUsd ? peak.priceUsd / call.athPriceUsd : 1;
     if (call.entryMcUsd) call.athMcUsd = (call.entryMcUsd * peak.priceUsd) / call.entryPriceUsd;
     call.athPriceUsd = peak.priceUsd;
     call.athAt = peak.at;
-
-    const label = call.ticker ? `$${call.ticker}` : call.address.slice(0, 8);
-    log.info(`${label} peaked ${missed.toFixed(2)}x higher than we sampled — corrected from the chart`);
   }
 
   /**
