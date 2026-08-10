@@ -15,8 +15,12 @@ const MEDALS = ['🥇', '🥈', '🥉'];
  *
  * Nobody is ranked before `minSample` priced picks. They are still listed, so a new member can
  * see their picks are being counted; they simply cannot win on three of them.
+ *
+ * Carries no clock. This same text is the pinned board in the channel, which only edits when it
+ * differs from what was sent last — a timestamp would make it differ every single minute, and
+ * the table would sit there re-editing itself in front of everyone while saying nothing new.
  */
-export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig, now = new Date()): string {
+export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig): string {
   if (!standings.length) {
     return [
       '🏆 <b>call competition</b>',
@@ -49,8 +53,8 @@ export function renderLeaderboard(standings: Standing[], comp: CompetitionConfig
 
   lines.push('');
   lines.push(
-    `<i>Median peak over every pick, wins and losses. ${cap(picksPerDay(comp))}. ` +
-      `Picks are never posted in the channel. Updated ${time(now)}.</i>`,
+    `<i>Median peak over every pick, wins and losses. ${cap(picksPerDay(comp))}, by DM to the bot. ` +
+      `Picks are never posted in the channel — only what they did reaches this table.</i>`,
   );
   return lines.join('\n');
 }
@@ -135,8 +139,4 @@ function picksPerDay(comp: CompetitionConfig): string {
 
 function cap(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function time(now: Date): string {
-  return now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }

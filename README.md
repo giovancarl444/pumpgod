@@ -405,7 +405,7 @@ Posting also requires `LIVE=true`, so nothing goes public by accident.
 A record only we can add to is a broadcast. `COMP_ENABLED` turns it into a competition: a member
 DMs the bot `/submit <address>` and their pick is priced by the same tracker, on the same
 schedule, against the same candles as ours. `/leaderboard` ranks everyone; `/me` shows one member
-their own record.
+their own record, worst pick included.
 
 ```
   🏆 call competition
@@ -416,9 +416,24 @@ their own record.
 
   still qualifying (5 priced picks needed): @dave 2/5 · @erin 1/5
 
-  Median peak over every pick, wins and losses. One pick a day.
-  Picks are never posted in the channel. Updated 21:40.
+  Median peak over every pick, wins and losses. One pick a day, by DM to the
+  bot. Picks are never posted in the channel — only what they did reaches
+  this table.
 ```
+
+The same table is pinned in the channel and edits itself, on the same machinery as the track
+record. That is the point of it: a leaderboard you have to message a bot to see is read only by
+the people already playing, and the people worth reaching are the ones who are not.
+
+```bash
+npm run leaderboard            # preview it
+npm run leaderboard -- --pin   # post and pin it, once
+```
+
+Pin it *empty*, on purpose — a table saying "nobody has entered yet, here is how" is the
+announcement. It carries no timestamp, and that is deliberate: the daemon skips an edit whose
+text hasn't changed, so a clock would make it rewrite itself once a minute in front of the whole
+channel while saying nothing new.
 
 Ranked on **median peak with a minimum sample**, never on best pick. A table topped by whoever
 got luckiest once never changes again, and everyone below the winner correctly stops trying. The
@@ -540,5 +555,6 @@ src/
   store/      journal (buffered, off the hot path); promo orders and members (on disk)
   track/      outcome tracking — entry, peak, milestones, rugs; and what it all adds up to
   social/     the record, published — X feed, in-channel milestone replies, pinned scoreboard
-scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap, scoreboard
+scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap,
+              scoreboard, leaderboard
 ```

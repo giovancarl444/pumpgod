@@ -11,7 +11,7 @@ import {
 } from './config';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
-import { Pinned } from './social/pinned';
+import { BOARD_STORE, competitionBoard, Pinned } from './social/pinned';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { MtprotoTransport } from './telegram/mtproto';
 import { BotApi, BotTransport } from './telegram/botapi';
@@ -40,26 +40,32 @@ import type { Source } from './types';
  *
  * Nothing to gate on beyond `live`: a call that was never published has no card to answer,
  * and a board that was never pinned has nothing to edit.
+ *
+ * `extra` is for boards that only exist in bot mode — the competition leaderboard, which needs
+ * a DM surface a user account cannot have. Each one is fed the same snapshot, so two pinned
+ * messages can never quote two different numbers for the same coin.
  */
 function startReceipts(
   transport: Transport,
   tracker: Tracker,
   config: AppConfig,
   channelPeer?: Peer,
+  extra: Pinned[] = [],
 ): NodeJS.Timeout | undefined {
   if (!config.live) return undefined;
 
   const followups = new Followups();
   followups.load();
   const pinned = new Pinned();
-  pinned.load();
+  const boards = [pinned, ...extra];
+  for (const board of boards) board.load();
 
   log.info(`receipts on · milestones answer their own call${pinned.live ? ' · track record self-updating' : ''}`);
 
   return setInterval(() => {
     const calls = tracker.list();
     void followups.run(transport, calls);
-    if (channelPeer) void pinned.refresh(transport, channelPeer, calls);
+    if (channelPeer) for (const board of boards) void board.refresh(transport, channelPeer, calls);
   }, config.trackIntervalMs);
 }
 
@@ -290,7 +296,11 @@ async function runBot(config: AppConfig) {
     log.warn('𝕏 credentials set but LIVE=false — nothing will be posted. Preview with `npm run recap`.');
   }
 
-  const receiptTimer = startReceipts(transport, tracker, config, channelPeer);
+  // Only when the competition is on. Otherwise the file could exist from a previous run and
+  // the daemon would keep a table current that nobody can add a pick to.
+  const boards = competition.enabled ? [new Pinned(BOARD_STORE, competitionBoard(member, competition))] : [];
+
+  const receiptTimer = startReceipts(transport, tracker, config, channelPeer, boards);
 
   log.info(`pumpgod live · bot mode · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`);
   if (!config.live) log.warn('LIVE=false — calls are logged but never posted. Flip LIVE=true when ready.');

@@ -4,7 +4,7 @@ import { log } from '../log';
 import { journal } from '../store/journal';
 import { Members, type MemberRecord } from '../store/members';
 import { byCaller, rank, type CallerRecord } from '../track/stats';
-import type { Tracker } from '../track/tracker';
+import type { Tracker, TrackedCall } from '../track/tracker';
 import type { DirectMessage } from '../telegram/botingest';
 import type { ParsedCall, Signal } from '../types';
 import { resolveManualCall } from './manual';
@@ -41,7 +41,12 @@ export interface MemberHandlers {
    * module a function from a message to a reply — the part worth having tests for.
    */
   submit(dm: DirectMessage, argument?: string): Promise<string>;
-  leaderboard(): Standing[];
+  /**
+   * Takes the calls to rank rather than reading them, so the pinned board in the channel and a
+   * `/me` reply in a DM can be computed from one snapshot. Two reads a poll apart would put two
+   * different medians for the same member on two screens, and someone would screenshot it.
+   */
+  leaderboard(calls?: TrackedCall[]): Standing[];
   standingFor(userId: string): Standing | undefined;
   members: Members;
 }
@@ -120,8 +125,8 @@ export function createMemberHandlers(deps: MemberDeps): MemberHandlers {
   };
 
   /** Everybody with at least one pick, best first, under-sampled members at the bottom. */
-  const leaderboard = (): Standing[] => {
-    const picks = tracker.list().filter((c) => c.outcome === 'member');
+  const leaderboard = (calls?: TrackedCall[]): Standing[] => {
+    const picks = (calls ?? tracker.list()).filter((c) => c.outcome === 'member');
     const standings = byCaller(picks).flatMap((record): Standing[] => {
       const memberId = memberIdFrom(record.id);
       if (!memberId) return [];

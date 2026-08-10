@@ -134,17 +134,23 @@ a schedule (weekly is the obvious one) or the table has no clock and no drama.
 **Do:** decide the prize and the period before turning it on. Changing the rules after people
 have picks on the board is the one thing that kills it.
 
-### 12. Test it on yourself, then announce it
+### 12. Test it on yourself, then pin the table
 
 Nobody submits to a bot they don't know accepts submissions, and `/submit` is invisible until
 someone says it exists.
 
 **Do:** with `COMP_ENABLED=true`, DM the bot `/submit <a real Solana address>` and confirm you
 get a confirmation with the entry market cap, that `/me` shows the pick, and that `npm run
-scoreboard` does **not** count it. Then announce it in the channel with the rules from step 11.
+scoreboard` does **not** count it.
 
-Worth saying in the announcement that picks are private and only the leaderboard is public —
-people are far more willing to enter when a bad pick isn't posted under their name.
+Then `npm run leaderboard` to preview and `npm run leaderboard -- --pin` to post and pin it —
+**pin it empty**, before anyone has entered. A table saying "nobody has entered yet, here is how"
+is the announcement, and it edits itself from then on. Note that Telegram shows the newest pin
+first, so pin this *before* the track record if you want the record on top.
+
+Say in the announcement that picks are private and only the leaderboard is public — people are
+far more willing to enter when a bad pick isn't posted under their name. State the prize and the
+period from step 11 in the same message.
 
 ---
 

@@ -21,7 +21,8 @@
     "replay": "tsx scripts/replay.ts",
     "recap": "tsx scripts/recap.ts",
     "scorecard": "tsx scripts/scorecard.ts",
-    "scoreboard": "tsx scripts/scoreboard.ts"
+    "scoreboard": "tsx scripts/scoreboard.ts",
+    "leaderboard": "tsx scripts/leaderboard.ts"
   },
   "engines": {
     "node": ">=18.14.0"

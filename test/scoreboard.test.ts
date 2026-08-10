@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scoreboard } from '../src/track/stats';
 import { renderScoreboard } from '../src/format/scoreboard';
-import { Pinned, readPinned, type PinnedState } from '../src/social/pinned';
-import type { TrackedCall } from '../src/track/tracker';
+import { competitionBoard, Pinned, readPinned, type PinnedState } from '../src/social/pinned';
+import { createMemberHandlers, memberSourceId } from '../src/pipeline/member';
+import type { AppConfig, CompetitionConfig } from '../src/config';
+import type { TrackedCall, Tracker } from '../src/track/tracker';
 import type { Peer, SendResult, Transport } from '../src/telegram/transport';
 
 function call(over: Partial<TrackedCall> = {}): TrackedCall {
@@ -191,5 +193,99 @@ describe('keeping the pinned message current', () => {
     const { transport: t, edits } = transport();
     await board.refresh(t, { id: '-1002' }, [call()]);
     expect(edits).toHaveLength(1);
+  });
+});
+
+/**
+ * The same machinery, keeping the competition table current. Everything above applies to it —
+ * what is worth proving separately is that the table is *stable*, because it is the one board
+ * whose text could plausibly carry a clock.
+ */
+describe('the pinned leaderboard', () => {
+  const COMP: CompetitionConfig = { enabled: true, picksPerDay: 1, minSample: 1, size: 10 };
+
+  function competition(calls: TrackedCall[]) {
+    const store = join(mkdtempSync(join(tmpdir(), 'pumpgod-')), 'leaderboard.json');
+    writeFileSync(store, JSON.stringify({ chatId: '-1002', messageId: 4, lastText: 'stale' }));
+
+    const tracker = { list: () => calls } as unknown as Tracker;
+    const member = createMemberHandlers({
+      config: { enrichTimeoutMs: 2000, chains: ['solana'] } as AppConfig,
+      competition: COMP,
+      tracker,
+    });
+
+    const board = new Pinned(store, competitionBoard(member, COMP));
+    board.load();
+    return board;
+  }
+
+  function pick(memberId: string, peak: number, i = 0): TrackedCall {
+    return call({
+      id: `${memberId}-${i}`,
+      sourceId: memberSourceId(memberId),
+      outcome: 'member',
+      address: `${memberId}addr${i}`,
+      entryPriceUsd: 1,
+      athPriceUsd: peak,
+      lastPriceUsd: peak,
+    });
+  }
+
+  it('pins a table with nobody on it, because that is the invitation', async () => {
+    const board = competition([]);
+    const { transport: t, edits } = transport();
+    await board.refresh(t, { id: '-1002' }, []);
+
+    expect(edits[0]!.html).toContain('Nobody has entered yet');
+    expect(edits[0]!.html).toContain('/submit');
+  });
+
+  /**
+   * The reason `renderLeaderboard` carries no timestamp. A clock would differ on every poll, so
+   * the table would re-edit itself once a minute forever — visible to the channel as a message
+   * being rewritten constantly while saying nothing new, and rate-limited for its trouble.
+   */
+  it('goes quiet while the picks are unchanged', async () => {
+    const calls = [pick('77', 3)];
+    const board = competition(calls);
+    const { transport: t, edits } = transport();
+
+    await board.refresh(t, { id: '-1002' }, calls);
+    await board.refresh(t, { id: '-1002' }, calls);
+    await board.refresh(t, { id: '-1002' }, calls);
+
+    expect(edits).toHaveLength(1);
+  });
+
+  it('edits as soon as a pick actually moves', async () => {
+    const board = competition([pick('77', 3)]);
+    const { transport: t, edits } = transport();
+
+    await board.refresh(t, { id: '-1002' }, [pick('77', 3)]);
+    await board.refresh(t, { id: '-1002' }, [pick('77', 9)]);
+
+    expect(edits).toHaveLength(2);
+    expect(edits[1]!.html).toContain('9.00x');
+  });
+
+  /**
+   * Both boards are now driven from one array in one tick. A member's 50x turning up on the
+   * track record would be the leak `isPublished()` exists to prevent, arriving by a route
+   * nobody was watching — so the two are fed the same calls here and asserted to disagree.
+   */
+  it('shares its calls with the track record without contaminating it', async () => {
+    const calls = [call(), pick('77', 50)];
+
+    const table = competition(calls);
+    const first = transport();
+    await table.refresh(first.transport, { id: '-1002' }, calls);
+    expect(first.edits[0]!.html).toContain('50.0x');
+
+    const { board } = pinned({ chatId: '-1002', messageId: 9, lastText: 'stale' });
+    const second = transport();
+    await board.refresh(second.transport, { id: '-1002' }, calls);
+    expect(second.edits[0]!.html).toContain('<b>1</b> call');
+    expect(second.edits[0]!.html).not.toContain('50.0x');
   });
 });
