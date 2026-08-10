@@ -22,8 +22,28 @@ log prints the real thread id. Put that number in `PUMPGOD_TOPIC`.
 `WAR_ROOM_CHAT` is empty, so every rejection — `✗ that is an EVM address`, `✗ no liquidity` —
 posts **publicly in the channel**. Members see the bot arguing with you.
 
+It now matters more than it did. A coin whose freeze authority is still live is held back
+rather than published, even when you typed `/signal` yourself — you cannot wave that one
+through, because it means one key holder decides whether anybody who buys is allowed to sell.
+Held-back calls are shown in the war room with a 🚀 to publish anyway. **Without a war room
+there is nowhere for that card to go**, so the call is simply refused and you are told why.
+
 **Do:** make a private group, add the bot as an admin, and put that group's id in
 `WAR_ROOM_CHAT`. If it has topics, set `WAR_ROOM_TOPIC` the same way as step 1.
+
+### 2b. Get a free Solana RPC key
+
+Two checks read the chain: whether the authorities are revoked, and whether one wallet holds
+most of the supply. **The first works right now with no key.** The second does not — Solana's
+public endpoint refuses `getTokenLargestAccounts` outright, and it refuses it with an HTTP 200
+carrying a 429 inside, which is why it is worth saying plainly rather than leaving to a log.
+
+So today every call is checked for "can they stop you selling" and none are checked for "is
+one dev holding it all". That is the check you described as *instantly ignore*.
+
+**Do:** sign up at [helius.dev](https://helius.dev) (free tier, no card) or any equivalent, and
+put the URL they give you in `SOLANA_RPC` in `.env`. Nothing else changes — the check starts
+answering. It is a URL containing a key, so it belongs in `.env` and never in the repo.
 
 ### 3. Put a referral code on the money
 

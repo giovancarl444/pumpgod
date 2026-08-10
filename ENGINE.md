@@ -89,13 +89,46 @@ What Engine 1 adds, all of it free:
 | Bundle / sniper detection | Was the launch bought by wallets funded together? | needs transaction history |
 
 I tested these against BONK on the public RPC. Mint and freeze authority come back cleanly and
-free. **`getTokenLargestAccounts` returned HTTP 429** — it is an expensive call and the public
-endpoint rate-limits it hard. That does not make it costly, it makes it keyed: Helius and
-QuickNode both have free tiers that cover this comfortably at our volume. Budget stays at zero,
-but it needs a key, and the public endpoint must not be used on the hot path.
+free. **`getTokenLargestAccounts` is refused** — it is an expensive call and the public endpoint
+turns it away, with an HTTP **200** carrying a 429 in the JSON-RPC error body, which is a shape
+worth knowing because a client checking only the status reads it as a token with no holders.
+That does not make it costly, it makes it keyed: Helius and QuickNode both have free tiers that
+cover this comfortably at our volume. Budget stays at zero, but it needs a key.
 
 The verdict is green/red exactly as you described, and it rejects most of what it sees. That is
 the point, and it is also the cost control for everything downstream.
+
+### Built (`src/pipeline/onchain.ts`, `risk.ts`)
+
+The first two rows are live. `/signal` reads the mint before it publishes, and a live freeze or
+mint authority is the **one flag a typed command cannot wave through** — every other check is a
+matter of degree an admin can reasonably overrule, while this one says a single key holder
+decides whether anybody who buys is allowed to sell. Verified against mainnet: USDC flags both
+(Circle really can freeze and mint), BONK comes back clear.
+
+Two rules were settled here and apply to everything Engine 1 grows into:
+
+- **Silence is never a pass.** A mint we could not reach reports "could not check", which is a
+  different state from "checked and fine". This is not pedantry — a mint seconds old is both the
+  case most worth checking and the case the indexers have not caught up with, so the failure mode
+  is concentrated exactly on the coins we are asked about fastest.
+- **Only a positive reading blocks.** A busy RPC can cost us a check; it can never manufacture a
+  refusal. Otherwise the safety screen doubles as an outage switch wired to somebody else's
+  capacity planning.
+
+Telling a pool from a person is done with the **ed25519 on-curve test** rather than a list of
+known AMM addresses: Solana derives program addresses by hashing until the result is *not* a
+valid curve point, so on-curve means a human could hold the key. Unlike an address list it
+cannot go stale. Without it the check is worse than useless — the largest holder of almost every
+healthy token is its own liquidity pool, so a naive "top holder owns 43%" flags every good coin
+on the chain and teaches everyone to ignore the flag.
+
+Concentration thresholds are **deliberately uncalibrated and say so in the code**. The keyless
+RPC blocks the holder call, so there was no distribution to measure. They therefore flag at
+caution and state the number rather than refusing on a guess — and once the scorecard has real
+holder readings behind real outcomes, where the line sits becomes something to look up instead
+of something to argue about. That is the same shape as everything else here: a number the record
+sets, not one I set.
 
 ---
 
@@ -130,6 +163,36 @@ The asset either way is **the watchlist and the memory** — which names mattere
 preceded a run, what happened last time this pattern appeared. That compounds, and it is the
 part a competitor cannot copy by screenshotting us.
 
+### Lane C — watched wallets, and why it reorders the whole thing
+
+Your cabal note is not a fourth lane bolted on beside the others. It **inverts the architecture**,
+and it is the single most valuable thing said in this planning session.
+
+The firehose model is: read every new pool, filter it down, decide. That makes us downstream of
+everyone by construction — we are reading the same public stream as every other bot, and the
+only competition left is who filters fastest.
+
+The wallet model is: watch the accounts with a measured record of being early, and let *their
+buys* be the discovery event. It is better on every axis that matters:
+
+- **Latency stops being a race.** A wallet buying is a block event. We are in the same block as
+  the alpha rather than some number of hops downstream of the news about it.
+- **The LLM bill collapses.** Reading 20,000 pools a day is a cost problem. Reading the fifty
+  coins that watched wallets actually bought is not.
+- **The list compounds and cannot be copied.** It is derived from our own measured outcomes.
+  Anybody can subscribe to the same firehose; nobody else has our record of which wallets were
+  right.
+- **It is the same fitness function we already run.** A wallet is just a `sourceId`. `byCaller`
+  and `MIN_SAMPLE = 20` already rank sources on measured performance, so a wallet earns its
+  place in exactly the way a rival Telegram group does — by the numbers, in shadow, first.
+
+So the firehose is not the discovery engine. It is the **backfill** — the thing that catches what
+the watchlist missed, and the thing that grows the watchlist by asking, of a coin that ran, which
+wallets were in it early.
+
+Order stands: Engine 1 gates everything either way, because a watched wallet buying a token with
+a live freeze authority is a wallet about to be rugged, not a signal.
+
 ### What discovery actually runs on
 
 Verified live while writing this:
@@ -141,10 +204,12 @@ Verified live while writing this:
   `links`. That is narrative text, handed over without an LLM having to guess at it.
 - **pump.fun's API is Cloudflare-blocked** (HTTP 530). Not a route without more work than it
   is worth.
+- **Watching wallets needs the same keyed RPC as the holder check** — one key unlocks both, so
+  Lane C costs nothing beyond the free tier already needed for Engine 1.
 
 One live sample of the firehose contained a pool with $15 of liquidity and another reporting a
-$21bn market cap. The stream is mostly garbage, which is exactly why Engine 1 runs first and
-why it must be cheap.
+$21bn market cap. The stream is mostly garbage, which is why it is the backfill and not the
+front door.
 
 ---
 
@@ -192,7 +257,16 @@ harder to fake.
 ## The mailbox: do the bots talk over Telegram?
 
 You asked whether the engines should pass work between each other as a Telegram "team",
-reacting to each other's messages. Split answer, and the split matters:
+reacting to each other's messages. Split answer, and the split matters — but there is a platform
+fact that settles half of it before preference gets a say:
+
+> **A Telegram bot cannot see another bot's messages.** Bot-to-bot is not something Telegram
+> throttles or discourages; it does not exist. Anything that looks like bots talking to each
+> other is a logged-in *user account* relaying between them — which in our case is the MTProto
+> reader, the one credential that can get the account banned. Putting it on the path between our
+> own components would mean a ban takes the engine down, not just the watching.
+
+With that established:
 
 **Not on the hot path.** The Bot API is rate-limited to roughly 30 messages a second globally
 and about 20 a minute into one group. A filter that has to clear a firehose of new pools in
@@ -217,9 +291,22 @@ between them.
 
 You asked about using existing bots for the pieces rather than hosting everything. Honest read:
 
+**Steal the techniques, not the dependency.** You noticed the Polymarket bot rendering a chart
+in chat faster than the Polymarket website could. That is a real observation and the reason is
+worth having: the bot is sending a **pre-rendered image**, which Telegram then serves from its
+own CDN and caches. The website is shipping JavaScript to your phone, booting a charting
+library, and drawing. One is a file download, the other is a program running. The bot was never
+going to lose that race.
+
+That technique is directly ours to take, and it is worth more than the bot is. It applies to the
+call card, to the pinned scoreboard, and it is most of Phase 6's image work already answered:
+render server-side, send a picture, let Telegram's CDN do the distribution. Nothing about it
+requires depending on anyone else's bot.
+
 **Good for cross-checking during development.** When Engine 1 says a token's LP is burned, run
 the same token past an established rug-checker and see whether it agrees. Disagreements are how
-you find bugs in your own checks cheaply, and it costs nothing.
+you find bugs in your own checks cheaply, and it costs nothing. Note this is a *manual* activity
+by design — see the platform fact above; our bot cannot read another bot's reply anyway.
 
 **Bad as a dependency in the pipeline.** Three reasons, and the third is the real one: they
 rate-limit and we would be sharing that limit with everyone; they can change output format or
@@ -255,9 +342,10 @@ This order is forced by data dependency, not preference. You cannot calibrate a 
 outcomes; you cannot get outcomes without candidates; you cannot get candidates without
 discovery.
 
-**A. Discovery + the real safety filter.** GeckoTerminal firehose in, on-chain checks bolted to
-`risk.ts`. Everything lands in the tracker as `shadow`. Publishes nothing. Free, needs no
-decisions from you beyond one RPC key.
+**A. The real safety filter.** ✅ **Done.** On-chain checks bolted to `risk.ts` and read on the
+`/signal` path. Authorities work today with no key; concentration needs one. What is *not* done
+is the discovery half — the firehose and the watched wallets feeding candidates in as `shadow`.
+That is A2, and it needs the RPC key, which is the one thing it needs from you.
 
 **B. Widen the decision snapshot.** `TrackedCall` carries every feature the engines saw plus,
 later, the score. From here on, every day the machine runs is a day of training data. This is
