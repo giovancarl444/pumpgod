@@ -164,6 +164,7 @@ export class BotTransport implements Transport {
     const dispatchAt = performance.now();
     const msg = await this.api.call<{ message_id: number }>('sendMessage', {
       chat_id: peer.id,
+      message_thread_id: peer.threadId,
       text: html,
       parse_mode: 'HTML',
       disable_web_page_preview: true,
@@ -196,6 +197,7 @@ export class BotTransport implements Transport {
     try {
       const msg = await this.api.call<{ message_id: number }>('sendPhoto', {
         chat_id: peer.id,
+        message_thread_id: peer.threadId,
         photo: imageUrl,
         caption: html,
         parse_mode: 'HTML',

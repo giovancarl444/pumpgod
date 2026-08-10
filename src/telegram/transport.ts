@@ -13,6 +13,12 @@ import type { IncomingCommand } from './ingest';
 export interface Peer {
   /** Stable identity, for comparing against an incoming chat id and for journalling. */
   readonly id: string;
+  /**
+   * Which forum topic to post into. A supergroup with Topics turned on still has one chat id;
+   * the topic is a thread inside it, and a send that omits this lands in General rather than
+   * failing — which is why a misconfigured topic looks like the bot ignoring the setting.
+   */
+  readonly threadId?: number;
 }
 
 export interface SendResult {

@@ -203,3 +203,45 @@ describe('reading our own rights in a chat', () => {
     expect(botRights('channel', { status: 'administrator', can_delete_messages: true }).canDelete).toBe(true);
   });
 });
+
+/**
+ * A group with Topics turned on has one chat id and many threads, and Telegram treats a send
+ * with no thread as General rather than refusing it. So the failure mode for a missing
+ * `message_thread_id` is a card posted where members are talking, which reads as the setting
+ * being ignored rather than as an error anybody can act on.
+ */
+describe('posting into a forum topic', () => {
+  const IN_TOPIC = { id: '-1001234567890', threadId: 291 };
+
+  it('carries the thread on a card sent as a photo', async () => {
+    const { calls, transport } = api();
+    await transport.sendPhoto(IN_TOPIC, 'https://img.example/coin.png', CARD);
+
+    expect(calls[0]!.method).toBe('sendPhoto');
+    expect(calls[0]!.params.message_thread_id).toBe(291);
+  });
+
+  it('carries the thread on a plain text send', async () => {
+    const { calls, transport } = api();
+    await transport.send(IN_TOPIC, CARD);
+
+    expect(calls[0]!.params.message_thread_id).toBe(291);
+  });
+
+  // The artwork fallback is the path a call actually takes when Telegram cannot fetch the
+  // image, so losing the thread here would put exactly the calls that went wrong in General.
+  it('keeps the thread when the photo fails and it falls back to text', async () => {
+    const { calls, transport } = api([{ ok: false, error_code: 400, description: 'wrong file identifier' }]);
+    await transport.sendPhoto(IN_TOPIC, 'https://img.example/broken.png', CARD);
+
+    expect(calls.map((c) => c.method)).toEqual(['sendPhoto', 'sendMessage']);
+    expect(calls[1]!.params.message_thread_id).toBe(291);
+  });
+
+  it('leaves the thread out entirely for a chat that has no topics', async () => {
+    const { calls, transport } = api();
+    await transport.send(PEER, CARD);
+
+    expect(calls[0]!.params.message_thread_id).toBeUndefined();
+  });
+});

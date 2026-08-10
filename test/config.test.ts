@@ -71,3 +71,48 @@ describe('starting with no credentials', () => {
     expect(() => loadConfig()).toThrow(/TG_API_ID/);
   });
 });
+
+/**
+ * Telegram spells a topic link three ways depending on whether the group is public and which
+ * client did the copying, and all anybody has to hand is whichever one the "Copy Link" button
+ * produced. Every spelling ends in the topic id.
+ */
+describe('PUMPGOD_TOPIC', () => {
+  const TOPIC = 'PUMPGOD_TOPIC';
+  const originalTopic = process.env[TOPIC];
+
+  afterEach(() => {
+    if (originalTopic === undefined) delete process.env[TOPIC];
+    else process.env[TOPIC] = originalTopic;
+  });
+
+  const load = (value?: string) => {
+    process.env.TG_BOT_TOKEN = '123:abc';
+    if (value === undefined) delete process.env[TOPIC];
+    else process.env[TOPIC] = value;
+    return loadConfig().channelTopic;
+  };
+
+  it('takes a bare id', () => {
+    expect(load('291')).toBe(291);
+  });
+
+  it('takes the link to a topic in a public group', () => {
+    expect(load('https://t.me/pumpgod_fun/291')).toBe(291);
+  });
+
+  // The private form carries the chat id too, so the *last* number is the topic, not the first.
+  it('takes the link to a topic in a private group, without mistaking the chat id for it', () => {
+    expect(load('https://t.me/c/1003966591859/291')).toBe(291);
+  });
+
+  it('means General when unset, which is a real answer rather than a missing one', () => {
+    expect(load(undefined)).toBeUndefined();
+  });
+
+  // Telegram posts to General when the thread is absent, so a value it cannot read would put
+  // cards in the wrong place quietly. Saying so at boot beats finding out from the group.
+  it('refuses a value with no id in it rather than silently posting to General', () => {
+    expect(() => load('the signals one')).toThrow(/not a topic id/);
+  });
+});

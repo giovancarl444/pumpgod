@@ -177,8 +177,12 @@ async function runBot(config: AppConfig) {
   const me = await api.call<{ username?: string }>('getMe');
   log.info(`connected as @${me.username ?? 'unknown'} (bot)`);
 
-  const channelPeer = await transport.resolve(config.channel);
-  const warRoomPeer = config.warRoom ? await transport.resolve(config.warRoom) : undefined;
+  // The topic rides on the peer rather than on the id, because a group with Topics turned on
+  // is still one chat — the thread only decides where inside it a message lands.
+  const channelPeer = { ...(await transport.resolve(config.channel)), threadId: config.channelTopic };
+  const warRoomPeer = config.warRoom
+    ? { ...(await transport.resolve(config.warRoom)), threadId: config.warRoomTopic }
+    : undefined;
 
   const tracker = new Tracker();
   tracker.load();

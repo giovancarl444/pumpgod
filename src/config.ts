@@ -27,6 +27,27 @@ function num(key: string, fallback: number): number {
 }
 
 /**
+ * Which forum topic to publish into, as either the bare id or the link Telegram's own
+ * "Copy Link" gives — `t.me/name/291` for a public group, `t.me/c/1234567890/291` for a
+ * private one. Every spelling ends in the topic id, so the last run of digits is the answer.
+ *
+ * A wrong id here is worth refusing rather than defaulting, because Telegram treats an absent
+ * thread as General and posts there quite happily — so the failure is a card in the wrong
+ * place, which reads as the setting being ignored.
+ */
+function topic(key: string): number | undefined {
+  const raw = process.env[key]?.trim();
+  if (!raw) return undefined;
+
+  const digits = raw.match(/\d+/g)?.pop();
+  const id = Number(digits);
+  if (!digits || !Number.isSafeInteger(id) || id <= 0) {
+    throw new Error(`${key}="${raw}" is not a topic id. Paste the topic's link, or just its number.`);
+  }
+  return id;
+}
+
+/**
  * A typo here would silently widen what we are willing to call, which is the opposite of
  * what someone setting this is trying to do — so an unrecognised chain is an error, not a
  * skipped entry. `CHAINS=all` is the explicit way to say "no restriction".
@@ -84,6 +105,9 @@ export interface AppConfig extends PresentationConfig {
   botToken: string;
   channel: string;
   warRoom?: string;
+  /** Forum topic to publish into. Unset means the group's General thread. */
+  channelTopic?: number;
+  warRoomTopic?: number;
   dedupeTtlMs: number;
   metricsIntervalMs: number;
   catchupIntervalMs: number;
@@ -154,6 +178,8 @@ export function loadConfig(): AppConfig {
     botToken,
     channel: process.env.PUMPGOD_CHANNEL?.trim() ?? '',
     warRoom: process.env.WAR_ROOM_CHAT?.trim() || undefined,
+    channelTopic: topic('PUMPGOD_TOPIC'),
+    warRoomTopic: topic('WAR_ROOM_TOPIC'),
     dedupeTtlMs: num('DEDUPE_TTL_SEC', 21_600) * 1000,
     metricsIntervalMs: num('METRICS_INTERVAL_SEC', 300) * 1000,
     catchupIntervalMs: num('CATCHUP_INTERVAL_SEC', 60) * 1000,
