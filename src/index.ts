@@ -1,5 +1,14 @@
 import { existsSync } from 'node:fs';
-import { loadConfig, loadPromo, loadSocial, loadSources, normalisePeerId, SOURCES_PATH, type AppConfig } from './config';
+import {
+  loadCompetition,
+  loadConfig,
+  loadPromo,
+  loadSocial,
+  loadSources,
+  normalisePeerId,
+  SOURCES_PATH,
+  type AppConfig,
+} from './config';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
 import { Pinned } from './social/pinned';
@@ -13,6 +22,8 @@ import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
 import { createCommandHandler } from './pipeline/command';
+import { createDirectHandler } from './pipeline/direct';
+import { createMemberHandlers } from './pipeline/member';
 import { createPromoHandlers } from './pipeline/promo';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
@@ -243,19 +254,31 @@ async function runBot(config: AppConfig) {
   const promoConfig = loadPromo();
   const promo = createPromoHandlers({ api, transport, config, promo: promoConfig, channelPeer, tracker });
 
+  const competition = loadCompetition();
+  const member = createMemberHandlers({ config, competition, tracker });
+  member.members.load();
+
+  const social = loadSocial();
+  const handleDirect = createDirectHandler({
+    api,
+    promo,
+    member: competition.enabled ? member : undefined,
+    competition,
+    channelUrl: social.channelUrl,
+  });
+
   const ingest = startBotIngest(
     api,
     { channelId: channelPeer.id, warRoomId: warRoomPeer?.id },
     {
       onCommand: (cmd) => void handleCommand(cmd),
       onReaction: (r) => router.handleReaction(r),
-      onDirect: (dm) => void promo.onDirect(dm),
+      onDirect: (dm) => void handleDirect(dm),
       onPreCheckout: (q) => void promo.onPreCheckout(q),
       onPaid: (p) => void promo.onPaid(p),
     },
   );
 
-  const social = loadSocial();
   const poster = new Poster({ ...social, dailyRecap: social.dailyRecap });
   poster.load();
 
@@ -276,6 +299,12 @@ async function runBot(config: AppConfig) {
     log.info(
       `📣 paid promotion open · ${promoConfig.priceStars} ⭐ per slot, ${promoConfig.dailyLimit}/day · ` +
         'posted marked as an advert and kept out of the record',
+    );
+  }
+  if (competition.enabled) {
+    log.info(
+      `🏆 call competition open · ${competition.picksPerDay}/day by DM · ` +
+        `ranked on median peak after ${competition.minSample} priced picks · never published`,
     );
   }
 

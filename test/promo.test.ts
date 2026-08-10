@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, PromoConfig } from '../src/config';
 import { renderPromo } from '../src/format/promo';
-import { createPromoHandlers, parsePromote, PROMO_SOURCE_ID } from '../src/pipeline/promo';
+import { createPromoHandlers, PROMO_SOURCE_ID, type PromoHandlers } from '../src/pipeline/promo';
 import { Promos } from '../src/store/promos';
 import { BotApi } from '../src/telegram/botapi';
 import { Tracker } from '../src/track/tracker';
@@ -117,6 +117,17 @@ function dm(text: string): DirectMessage {
   return { text, chatId: '555', messageId: 1, fromId: '555', handle: '@buyer', recvAt: 0 };
 }
 
+const COIN = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+
+/**
+ * `/promote <address>` as it arrives here — the DM router has already taken the verb off the
+ * front, so the handler is handed both the message and the argument. Which spellings of the
+ * command reach it at all is `direct.test.ts`'s question, not this file's.
+ */
+function promote(onPromote: PromoHandlers['onPromote'], address = COIN) {
+  return onPromote(dm(`/promote ${address}`), address);
+}
+
 function paid(payload: string): PaidOrder {
   return {
     chatId: '555',
@@ -156,8 +167,8 @@ afterEach(() => {
 describe('quoting a slot', () => {
   it('invoices in Stars, which is the only currency a bot may charge in', async () => {
     market(GOOD);
-    const { onDirect, promos } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote, promos } = handlers();
+    await promote(onPromote);
 
     const invoice = invoices()[0]!;
     expect(invoice.params.currency).toBe('XTR');
@@ -170,8 +181,8 @@ describe('quoting a slot', () => {
   // the normal way a bad coin is turned away, and would put us in an argument every time.
   it('refuses a coin the screen rejects before charging anything', async () => {
     market(HONEYPOT);
-    const { onDirect } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote } = handlers();
+    await promote(onPromote);
 
     expect(invoices()).toHaveLength(0);
     expect(replies()[0]).toContain('Nothing has been charged');
@@ -179,8 +190,8 @@ describe('quoting a slot', () => {
 
   it('charges nothing for an address that does not resolve', async () => {
     market(null);
-    const { onDirect } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote } = handlers();
+    await promote(onPromote);
 
     expect(invoices()).toHaveLength(0);
     expect(replies()[0]).toContain('✗');
@@ -188,8 +199,8 @@ describe('quoting a slot', () => {
 
   it('stays shut when promotion is switched off, which is the default', async () => {
     market(GOOD);
-    const { onDirect } = handlers({ promo: { enabled: false } });
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote } = handlers({ promo: { enabled: false } });
+    await promote(onPromote);
 
     expect(invoices()).toHaveLength(0);
     expect(replies()[0]).toContain('not open');
@@ -198,37 +209,29 @@ describe('quoting a slot', () => {
   // Taking money for a post that cannot go out is the one failure worth pre-empting entirely.
   it('will not sell a slot in a channel it is not publishing to', async () => {
     market(GOOD);
-    const { onDirect } = handlers({ config: { live: false } });
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote } = handlers({ config: { live: false } });
+    await promote(onPromote);
 
     expect(invoices()).toHaveLength(0);
   });
 
   it('does not open a second invoice for a coin already waiting to be paid for', async () => {
     market(GOOD);
-    const { onDirect } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote } = handlers();
+    await promote(onPromote);
+    await promote(onPromote);
 
     expect(invoices()).toHaveLength(1);
     expect(replies().at(-1)).toContain('already have an unpaid invoice');
   });
 
-  it('answers an ordinary DM instead of ignoring it', async () => {
-    market(GOOD);
-    const { onDirect } = handlers();
-    await onDirect(dm('/start'));
-
-    expect(replies()[0]).toContain('pumpgod');
-    expect(invoices()).toHaveLength(0);
-  });
 });
 
 describe('taking the payment', () => {
   it('approves a checkout for an open order at the price we set', async () => {
     market(GOOD);
-    const { onDirect, onPreCheckout } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote, onPreCheckout } = handlers();
+    await promote(onPromote);
     const payload = String(invoices()[0]!.params.payload);
 
     await onPreCheckout(checkout(payload));
@@ -248,8 +251,8 @@ describe('taking the payment', () => {
   // accepting a price we did not set.
   it('refuses a checkout whose amount is not the one invoiced', async () => {
     market(GOOD);
-    const { onDirect, onPreCheckout } = handlers();
-    await onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    const { onPromote, onPreCheckout } = handlers();
+    await promote(onPromote);
     const payload = String(invoices()[0]!.params.payload);
 
     await onPreCheckout(checkout(payload, { amount: 1 }));
@@ -260,7 +263,7 @@ describe('taking the payment', () => {
 describe('delivering it', () => {
   async function buy(h = handlers()) {
     market(GOOD);
-    await h.onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    await promote(h.onPromote);
     const payload = String(invoices()[0]!.params.payload);
     await h.onPaid(paid(payload));
     return { ...h, payload };
@@ -288,7 +291,7 @@ describe('delivering it', () => {
   it('gives the Stars back when the card cannot be posted', async () => {
     market(GOOD);
     const h = handlers();
-    await h.onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    await promote(h.onPromote);
     const payload = String(invoices()[0]!.params.payload);
 
     vi.spyOn(transport, 'send').mockRejectedValueOnce(new Error('chat not found'));
@@ -318,7 +321,7 @@ describe('delivering it', () => {
     capped.promos.load();
     market(GOOD);
     calls = [];
-    await capped.onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    await promote(capped.onPromote);
 
     expect(invoices()).toHaveLength(0);
   });
@@ -332,7 +335,7 @@ describe('keeping it out of the record', () => {
   it('tracks a promoted coin under its own source, never as a call', async () => {
     market(GOOD);
     const h = handlers();
-    await h.onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    await promote(h.onPromote);
     await h.onPaid(paid(String(invoices()[0]!.params.payload)));
 
     const tracked = h.tracker.list();
@@ -343,30 +346,11 @@ describe('keeping it out of the record', () => {
   it('counts for nothing on the scoreboard, in either direction', async () => {
     market(GOOD);
     const h = handlers();
-    await h.onDirect(dm('/promote 9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'));
+    await promote(h.onPromote);
     await h.onPaid(paid(String(invoices()[0]!.params.payload)));
 
     // Neither its wins nor its losses are ours: it is absent, not zeroed.
     expect(scoreboard(h.tracker.list()).called).toBe(0);
-  });
-});
-
-describe('parsePromote', () => {
-  it('takes the spellings somebody would actually type', () => {
-    expect(parsePromote('/promote abc')).toBe('abc');
-    expect(parsePromote('/promo abc')).toBe('abc');
-    expect(parsePromote('/promote@pumpgodbot abc')).toBe('abc');
-    expect(parsePromote('promote abc')).toBe('abc');
-  });
-
-  it('is not confused by a call', () => {
-    expect(parsePromote('/signal abc')).toBeUndefined();
-  });
-
-  it('reports a bare command separately from no command at all', () => {
-    // One should offer help, the other should be ignored — so they cannot share a return value.
-    expect(parsePromote('/promote')).toBeUndefined();
-    expect(parsePromote('hello')).toBeUndefined();
   });
 });
 

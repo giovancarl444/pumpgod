@@ -181,6 +181,48 @@ export function loadPromo(): PromoConfig {
   };
 }
 
+/**
+ * The member call competition.
+ *
+ * Members submit their own picks by DM; the bot prices them for 24 hours like any other call
+ * and ranks people on what their picks actually did. Nothing submitted is ever published — the
+ * point is a leaderboard nobody can fake, not a second feed of unvetted calls.
+ *
+ * Off by default, like the other two surfaces. Opening a competition changes what the channel
+ * asks of the people in it.
+ */
+export interface CompetitionConfig {
+  enabled: boolean;
+  /**
+   * Picks per member per rolling 24h.
+   *
+   * One, because the competition measures judgement and any number above one measures
+   * persistence instead. Somebody submitting ten coins a day will eventually top a leaderboard
+   * without ever having been right about anything.
+   */
+  picksPerDay: number;
+  /**
+   * Priced picks before somebody is ranked rather than merely listed.
+   *
+   * The same rule the source scorecard uses, for the same reason: below it a median is one
+   * lucky pick wearing a statistic's clothes. Lower than the scorecard's 20 because a member
+   * picking once a day takes three weeks to reach 20, and a leaderboard nobody can appear on
+   * for three weeks is not a competition.
+   */
+  minSample: number;
+  /** Rows on the public leaderboard. */
+  size: number;
+}
+
+export function loadCompetition(): CompetitionConfig {
+  return {
+    enabled: bool('COMP_ENABLED', false),
+    picksPerDay: num('COMP_PICKS_PER_DAY', 1),
+    minSample: num('COMP_MIN_SAMPLE', 5),
+    size: num('COMP_LEADERBOARD_SIZE', 10),
+  };
+}
+
 export function loadSocial(): SocialConfig {
   return {
     channelUrl: process.env.CHANNEL_URL?.trim() || undefined,

@@ -33,17 +33,16 @@ export interface PromoDeps {
   promos?: Promos;
 }
 
-/** `/promote <address>`, with the same tolerance for Telegram's `@thebot` suffix as `/signal`. */
-export function parsePromote(text: string): string | undefined {
-  const match = /^\s*\/?(?:promote|promo|ad)(?:@\w+)?\b[\s:]*/i.exec(text);
-  if (!match) return undefined;
-  return text.slice(match[0].length).trim() || undefined;
-}
-
 export interface PromoHandlers {
-  onDirect(dm: DirectMessage): Promise<void>;
+  /**
+   * `/promote <address>` from a DM. Dispatch lives in `direct.ts` — this module knows how to
+   * sell a slot, not which of the bot's several commands was typed.
+   */
+  onPromote(dm: DirectMessage, argument: string): Promise<void>;
   onPreCheckout(query: PreCheckout): Promise<void>;
   onPaid(order: PaidOrder): Promise<void>;
+  /** So the DM router can describe the offer without keeping its own copy of the price. */
+  readonly config: PromoConfig;
 }
 
 /**
@@ -66,32 +65,7 @@ export function createPromoHandlers(deps: PromoDeps): PromoHandlers {
     });
   };
 
-  const help = async (dm: DirectMessage) => {
-    await reply(
-      dm.chatId,
-      [
-        '👋 <b>pumpgod</b>',
-        '',
-        'This bot posts calls in the channel and re-prices every one of them for 24 hours, ' +
-          'losses included.',
-        '',
-        promo.enabled
-          ? `To buy a promotion slot: <code>/promote &lt;contract address&gt;</code> — ${priceStars} ⭐, ` +
-            `up to ${dailyLimit} a day. It is posted clearly marked as an advert.`
-          : 'Promotion slots are not open at the moment.',
-      ].join('\n'),
-    );
-  };
-
-  const onDirect = async (dm: DirectMessage): Promise<void> => {
-    const argument = parsePromote(dm.text);
-    if (argument === undefined) {
-      // Anything else in a DM, `/start` included. Answering is the whole reason the DM surface
-      // is open — a bot that reads a message and says nothing looks broken.
-      if (/^\s*\/(start|help)\b/i.test(dm.text) || !dm.text.startsWith('/')) await help(dm);
-      return;
-    }
-
+  const onPromote = async (dm: DirectMessage, argument: string): Promise<void> => {
     if (!promo.enabled) {
       await reply(dm.chatId, 'Promotion slots are not open at the moment.');
       return;
@@ -255,7 +229,7 @@ export function createPromoHandlers(deps: PromoDeps): PromoHandlers {
   };
 
   promos.load();
-  return { onDirect, onPreCheckout, onPaid };
+  return { onPromote, onPreCheckout, onPaid, config: promo };
 }
 
 /**

@@ -24,17 +24,24 @@ export type Outcome =
   | 'dry-run'
   | 'duplicate'
   /** Somebody paid for the slot. Tracked so it can be answered for, never counted as ours. */
-  | 'promo';
+  | 'promo'
+  /** A channel member's own pick, for the competition. Measured, never published. */
+  | 'member';
 
 /**
  * Which outcome wins when the same source calls the same coin twice. Higher takes precedence.
  *
- * `promo` sits at the top, above `called`, and that is the point rather than a ranking of
- * importance: it makes the outcome **sticky**, so no later code path can promote a paid slot
- * into a call of ours. Combined with its own `sourceId`, which keeps it in a separate record
- * from anything we called ourselves, a bought card cannot reach the scoreboard, the X feed or
- * the milestone replies by any route — `isPublished` asks for `called` and this can never
- * become it.
+ * There are two regions here, and the boundary matters more than the order inside them.
+ * `duplicate` through `called` is **ours, and it can climb**: a call normally arrives as
+ * `staged` and is promoted to `called` when somebody approves it.
+ *
+ * `promo` and `member` sit *above* `called` — not because a bought slot outranks a call, but
+ * because putting them above the top of the climbing region makes them **sticky**. No later
+ * code path can promote a paid advert or a stranger's pick into a call of ours, however it is
+ * routed. Each also carries its own `sourceId`, so its record can never merge with a coin we
+ * called ourselves. `isPublished` asks for `called`, and neither of these can ever become it:
+ * that is what keeps both off the scoreboard, out of the X feed and out of the milestone
+ * replies, without anyone having to remember to check.
  */
 const RANK: Record<Outcome, number> = {
   duplicate: 0,
@@ -43,6 +50,7 @@ const RANK: Record<Outcome, number> = {
   staged: 3,
   called: 4,
   promo: 5,
+  member: 6,
 };
 
 export interface TrackedCall {

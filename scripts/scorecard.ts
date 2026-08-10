@@ -1,5 +1,5 @@
-import { Tracker, type TrackedCall } from '../src/track/tracker';
-import { median, peakMultiple } from '../src/track/stats';
+import { Tracker } from '../src/track/tracker';
+import { byCaller, rank, type CallerRecord } from '../src/track/stats';
 import { duration, money } from '../src/format/call';
 
 /**
@@ -8,44 +8,22 @@ import { duration, money } from '../src/format/call';
  * Peak multiple is reported as a median rather than a mean on purpose: one 200x drags a
  * mean somewhere useless, and the question being answered is "what does a typical call from
  * this group do", not "what is the best thing that ever happened".
+ *
+ * Every figure comes from `byCaller`, which is also what the member leaderboard is built from
+ * and what the pinned board's rules are written in. There is one definition of "how did this
+ * caller do" in the codebase, and this is a view of it rather than a second opinion.
  */
 
-/** Below this many calls, a median is noise dressed up as a number. */
+/** Below this many priced calls, a median is noise dressed up as a number. */
 const MIN_SAMPLE = 20;
-
-interface Row {
-  source: string;
-  n: number;
-  medianPeak: number;
-  hit2x: number;
-  hit5x: number;
-  hit10x: number;
-  rugged: number;
-  medianEntryMc: number;
-  medianTimeTo2x?: number;
-}
-
-function summarise(source: string, calls: TrackedCall[]): Row {
-  const peaks = calls.map(peakMultiple).filter((v): v is number => v !== undefined);
-  const times = calls.map((c) => c.timeTo2xSec).filter((v): v is number => v !== undefined);
-  const pct = (n: number) => (calls.length ? (n / calls.length) * 100 : 0);
-
-  return {
-    source,
-    n: calls.length,
-    medianPeak: median(peaks),
-    hit2x: pct(calls.filter((c) => c.timeTo2xSec !== undefined).length),
-    hit5x: pct(calls.filter((c) => c.timeTo5xSec !== undefined).length),
-    hit10x: pct(calls.filter((c) => c.timeTo10xSec !== undefined).length),
-    rugged: pct(calls.filter((c) => c.rugged).length),
-    medianEntryMc: median(calls.map((c) => c.entryMcUsd ?? 0).filter(Boolean)),
-    medianTimeTo2x: times.length ? median(times) : undefined,
-  };
-}
 
 /** A column with nothing in it says so, rather than printing a confident zero. */
 function or(value: string | undefined): string {
   return value ?? '—';
+}
+
+function pct(n: number, of: number): string {
+  return of ? `${((n / of) * 100).toFixed(0)}%` : '—';
 }
 
 function main() {
@@ -58,29 +36,14 @@ function main() {
   const onlyCalled = process.argv.includes('--called');
   const calls = onlyCalled ? all.filter((c) => c.outcome === 'called') : all;
 
-  const bySource = new Map<string, TrackedCall[]>();
-  for (const c of calls) {
-    const list = bySource.get(c.sourceId) ?? [];
-    list.push(c);
-    bySource.set(c.sourceId, list);
-  }
-
-  // Ranking is read off the table order, so a source with three lucky calls must not sit
-  // at the top. Under-sampled sources sort to the bottom however good they look.
-  const rows = [...bySource.entries()]
-    .map(([source, list]) => summarise(source, list))
-    .sort((a, b) => {
-      const aThin = a.n < MIN_SAMPLE;
-      const bThin = b.n < MIN_SAMPLE;
-      if (aThin !== bThin) return aThin ? 1 : -1;
-      return b.medianPeak - a.medianPeak;
-    });
+  const rows = rank(byCaller(calls), MIN_SAMPLE);
 
   console.log(`\n─── source scorecard ─── ${calls.length} calls${onlyCalled ? ' (published only)' : ''}\n`);
   console.log(
     '  ' +
       'SOURCE'.padEnd(18) +
       'N'.padEnd(6) +
+      'PRICED'.padEnd(8) +
       'MED PEAK'.padEnd(11) +
       '2x'.padEnd(8) +
       '5x'.padEnd(8) +
@@ -89,35 +52,44 @@ function main() {
       'MED ENTRY'.padEnd(12) +
       'MED→2x',
   );
-  console.log('  ' + '─'.repeat(94));
+  console.log('  ' + '─'.repeat(102));
 
   for (const r of rows) {
     console.log(
       '  ' +
-        r.source.padEnd(18) +
-        String(r.n).padEnd(6) +
+        r.id.padEnd(18) +
+        String(r.picks).padEnd(6) +
+        String(r.priced).padEnd(8) +
         `${r.medianPeak.toFixed(2)}x`.padEnd(11) +
-        `${r.hit2x.toFixed(0)}%`.padEnd(8) +
-        `${r.hit5x.toFixed(0)}%`.padEnd(8) +
-        `${r.hit10x.toFixed(0)}%`.padEnd(8) +
-        `${r.rugged.toFixed(0)}%`.padEnd(8) +
-        or(r.medianEntryMc ? money(r.medianEntryMc) : undefined).padEnd(12) +
-        or(r.medianTimeTo2x === undefined ? undefined : duration(r.medianTimeTo2x)),
+        // Against what we could price, not against everything submitted: a call with no price
+        // is not a miss, and counting it as one makes every group look worse than it was.
+        pct(r.hit2x, r.priced).padEnd(8) +
+        pct(r.hit5x, r.priced).padEnd(8) +
+        pct(r.hit10x, r.priced).padEnd(8) +
+        pct(r.rugged, r.picks).padEnd(8) +
+        or(r.medianEntryMcUsd ? money(r.medianEntryMcUsd) : undefined).padEnd(12) +
+        or(r.medianTimeTo2xSec === undefined ? undefined : duration(r.medianTimeTo2xSec)),
     );
   }
 
-  const thin = rows.filter((r) => r.n < MIN_SAMPLE);
+  const unpriced = rows.reduce((sum: number, r: CallerRecord) => sum + r.unpriced, 0);
+  if (unpriced) {
+    console.log(`\n  ${unpriced} call(s) never got a price and are excluded from every rate above.`);
+  }
+
+  const thin = rows.filter((r) => r.priced < MIN_SAMPLE);
   if (thin.length) {
     console.log(
-      `\n  ⚠️  ${thin.map((r) => r.source).join(', ')} — under ${MIN_SAMPLE} calls. Too few to promote out of shadow yet.`,
+      `\n  ⚠️  ${thin.map((r) => r.id).join(', ')} — under ${MIN_SAMPLE} priced calls. ` +
+        'Too few to promote out of shadow yet.',
     );
   }
 
-  const best = rows.filter((r) => r.n >= MIN_SAMPLE)[0];
+  const best = rows.find((r) => r.priced >= MIN_SAMPLE);
   if (best) {
     console.log(
-      `\n  Best on current data: ${best.source} — median ${best.medianPeak.toFixed(2)}x, ` +
-        `${best.hit2x.toFixed(0)}% hit 2x, ${best.rugged.toFixed(0)}% rugged.`,
+      `\n  Best on current data: ${best.id} — median ${best.medianPeak.toFixed(2)}x, ` +
+        `${pct(best.hit2x, best.priced)} hit 2x, ${pct(best.rugged, best.picks)} rugged.`,
     );
   }
 
