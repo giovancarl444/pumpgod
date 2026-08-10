@@ -2,6 +2,8 @@ import { Api, TelegramClient } from 'telegram';
 import { loadConfig, loadSources, type AppConfig } from '../src/config';
 import { createClient, primeEntityCache, resolveInputPeer } from '../src/telegram/client';
 import { FIRE, SKIP } from '../src/pipeline/router';
+import { resolveManualCall } from '../src/pipeline/manual';
+import { fetchImage } from '../src/telegram/photo';
 import type { Source } from '../src/types';
 
 /**
@@ -15,7 +17,9 @@ import type { Source } from '../src/types';
  *
  * Nothing here writes to Telegram. A test message flashed into the public channel to prove post
  * rights is visible to members even if it is deleted a moment later, so post rights are derived
- * from the entity instead.
+ * from the entity instead. The `/signal` path is proven the same way: rights come off the
+ * channel entity, and the market and image hops are exercised against a coin listed for years,
+ * so a failure is our network rather than anything published.
  */
 
 type Status = 'ok' | 'warn' | 'fail';
@@ -28,7 +32,7 @@ interface Check {
   hint?: string;
 }
 
-const SECTIONS = ['Account', 'Sources', 'Destinations', 'Behaviour'] as const;
+const SECTIONS = ['Account', 'Sources', 'Destinations', 'Calling', 'Behaviour'] as const;
 type Section = (typeof SECTIONS)[number];
 
 const ICON: Record<Status, string> = { ok: '✓', warn: '⚠', fail: '✗' };
@@ -205,6 +209,133 @@ export function postRights(entity: Api.TypeChat | Api.TypeUser): Omit<Check, 'la
     detail: 'resolves to a private chat with a user, not a channel or group',
     hint: 'almost certainly the wrong id — check it against `npm run dialogs`',
   };
+}
+
+/**
+ * Whether `/signal` typed in the channel would be honoured, and whether the command message
+ * can then be cleaned up.
+ *
+ * The two chat kinds answer this differently. A broadcast channel only lets admins post, so
+ * the message existing is the proof and post rights are the whole story. A supergroup lets
+ * anyone type, so the command is gated on admin rights that `postRights` does not require —
+ * meaning a setup that passes every other check here can still ignore every command.
+ */
+export function signalRights(entity: Api.TypeChat | Api.TypeUser): Omit<Check, 'label'> {
+  const admin = (e: Api.Channel | Api.Chat) => Boolean(e.creator || e.adminRights);
+
+  if (entity instanceof Api.Channel) {
+    if (entity.broadcast) {
+      if (!admin(entity)) {
+        return {
+          status: 'fail',
+          detail: 'broadcast channel · not an admin, so nothing typed here can publish',
+          hint: 'promote this account to admin on the channel and tick "Post Messages"',
+        };
+      }
+      // Deleting your own post needs the right explicitly, unless you created the channel.
+      if (!entity.creator && !entity.adminRights?.deleteMessages) {
+        return {
+          status: 'warn',
+          detail: 'broadcast channel · admin, but cannot delete messages',
+          hint: 'tick "Delete Messages" too, or the typed /signal stays visible above the card',
+        };
+      }
+      return { status: 'ok', detail: 'broadcast channel · admin, /signal will publish' };
+    }
+
+    if (!admin(entity)) {
+      return {
+        status: 'fail',
+        detail: 'supergroup · not an admin, so /signal will be ignored here',
+        hint: 'promote this account to admin — in a supergroup anyone can type, so we check',
+      };
+    }
+    return { status: 'ok', detail: 'supergroup · admin, /signal will publish' };
+  }
+
+  if (entity instanceof Api.Chat) {
+    return admin(entity)
+      ? { status: 'ok', detail: 'group · admin, /signal will publish' }
+      : {
+          status: 'fail',
+          detail: 'group · not an admin, so /signal will be ignored here',
+          hint: 'promote this account to admin in the group',
+        };
+  }
+
+  return { status: 'warn', detail: 'not a channel or group, so /signal has no admin to check' };
+}
+
+/**
+ * The half of `/signal` that has nothing to do with Telegram: turning an address into live
+ * numbers, then fetching the artwork the card is posted as. Both are third-party calls, and
+ * both fail in ways that look from the outside like the bot ignoring you.
+ *
+ * Probed with a coin that has been listed for years, so a failure here is our network or
+ * DexScreener — never the coin.
+ */
+async function callPathChecks(config: AppConfig): Promise<Check[]> {
+  const PROBE = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+  const checks: Check[] = [];
+
+  checks.push({
+    status: 'ok',
+    label: 'chains',
+    detail: config.chains.length ? `calling ${config.chains.join(', ')} only` : 'calling every chain',
+    hint: config.chains.length ? undefined : 'CHAINS=all is set — nothing is filtered by chain',
+  });
+
+  const started = Date.now();
+  // No chain restriction on the probe itself: this is asking whether DexScreener answers, and
+  // reporting "wrong chain" for a coin we picked ourselves would be a confusing way to say so.
+  const outcome = await resolveManualCall(PROBE, 5000);
+  const ms = Date.now() - started;
+
+  if (!outcome.ok) {
+    checks.push({
+      status: 'fail',
+      label: 'market data',
+      detail: `DexScreener could not price a known coin: ${outcome.reason}`,
+      hint: 'no market data means /signal refuses every address — check the network, then retry',
+    });
+    return checks;
+  }
+
+  checks.push({ status: 'ok', label: 'market data', detail: `DexScreener answered in ${ms}ms` });
+
+  if (!config.showImage) {
+    checks.push({
+      status: 'warn',
+      label: 'coin artwork',
+      detail: 'SHOW_IMAGE=false — cards are posted as text',
+      hint: 'set SHOW_IMAGE=true in .env to post the coin image with the call',
+    });
+    return checks;
+  }
+
+  const url = outcome.call.imageUrl;
+  if (!url) {
+    checks.push({ status: 'warn', label: 'coin artwork', detail: 'the probe coin has no indexed image' });
+    return checks;
+  }
+
+  const imgStarted = Date.now();
+  const image = await fetchImage(url, 5000);
+  checks.push(
+    image
+      ? {
+          status: 'ok',
+          label: 'coin artwork',
+          detail: `fetched ${(image.bytes.length / 1024).toFixed(0)}KB in ${Date.now() - imgStarted}ms`,
+        }
+      : {
+          status: 'warn',
+          label: 'coin artwork',
+          detail: 'the image CDN did not serve a known coin logo',
+          hint: 'calls still publish, as text — the picture is the only thing lost',
+        },
+  );
+  return checks;
 }
 
 /**
@@ -404,6 +535,8 @@ async function main(): Promise<number> {
     // Only set once the war room is proven postable — running the reaction check against a
     // chat we have already established we cannot post in reports a second, confusing failure.
     let warRoom: { peer: Api.TypeInputPeer; entity: Api.TypeChat | Api.TypeUser } | undefined;
+    // Held so the `/signal` check can read admin rights off it rather than resolving twice.
+    let channelEntity: Api.TypeChat | Api.TypeUser | undefined;
 
     for (const [label, target] of [
       ['channel', config.channel],
@@ -433,6 +566,7 @@ async function main(): Promise<number> {
         const entity = (await client.getEntity(peer)) as Api.TypeChat | Api.TypeUser;
         const rights = postRights(entity);
         if (label === 'war room' && rights.status !== 'fail') warRoom = { peer, entity };
+        if (label === 'channel') channelEntity = entity;
         report.add('Destinations', { ...rights, label, detail: `${titleOf(entity)} · ${rights.detail}` });
       } catch (err) {
         const code = reason(err);
@@ -444,6 +578,9 @@ async function main(): Promise<number> {
         });
       }
     }
+
+    if (channelEntity) report.add('Calling', { ...signalRights(channelEntity), label: '/signal rights' });
+    for (const check of await callPathChecks(config)) report.add('Calling', check);
 
     const needsReview = sources.filter((s) => s.mode === 'review');
     if (warRoom) {

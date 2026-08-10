@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
 import type { Chain, RiskLevel, Signal } from '../types';
 import { log } from '../log';
@@ -129,10 +129,14 @@ export class Tracker {
   private dirty = false;
   private timer?: NodeJS.Timeout;
 
+  /** Overridden in tests so they cannot write over the real outcome store — the entries in
+   *  it are irreplaceable, since a call's peak can only be measured while it is happening. */
+  constructor(private readonly store = STORE) {}
+
   load(): void {
-    if (!existsSync(STORE)) return;
+    if (!existsSync(this.store)) return;
     try {
-      const raw = JSON.parse(readFileSync(STORE, 'utf8')) as TrackedCall[];
+      const raw = JSON.parse(readFileSync(this.store, 'utf8')) as TrackedCall[];
       for (const c of raw) this.calls.set(key(c.sourceId, c.chain, c.address), c);
       log.debug(`loaded ${this.calls.size} tracked calls`);
     } catch (err) {
@@ -280,12 +284,17 @@ export class Tracker {
     this.dirty = true;
   }
 
+  /** Everything held right now. The scorecard reads the file; this reads the live map. */
+  list(): TrackedCall[] {
+    return [...this.calls.values()];
+  }
+
   persist(): void {
     if (!this.dirty) return;
     this.dirty = false;
     try {
-      mkdirSync(resolve(ROOT, 'data'), { recursive: true });
-      writeFileSync(STORE, JSON.stringify([...this.calls.values()], null, 2));
+      mkdirSync(dirname(this.store), { recursive: true });
+      writeFileSync(this.store, JSON.stringify(this.list(), null, 2));
     } catch (err) {
       log.warn(`could not persist tracked calls: ${(err as Error).message}`);
     }

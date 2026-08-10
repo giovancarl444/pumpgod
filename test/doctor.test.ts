@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Api, TelegramClient } from 'telegram';
 import bigInt from 'big-integer';
-import { postRights, reactionCheck } from '../scripts/doctor';
+import { postRights, reactionCheck, signalRights } from '../scripts/doctor';
 
 /**
  * The doctor only has value if its verdicts are right. Every case here is a real
@@ -105,6 +105,52 @@ describe('postRights on a chat we cannot see', () => {
 
   it('warns when the destination is a user, not a channel', () => {
     expect(postRights(new Api.User({ id: bigInt(1) })).status).toBe('warn');
+  });
+});
+
+// `/signal` is gated more tightly than posting is, and the gap is the whole point: a
+// supergroup member can post but must not be able to publish a call through us. A setup that
+// passes every other check can still ignore every command typed into it.
+describe('signalRights', () => {
+  it('passes an admin of a broadcast channel who can also tidy up after themselves', () => {
+    const entity = channel({
+      broadcast: true,
+      adminRights: new Api.ChatAdminRights({ postMessages: true, deleteMessages: true }),
+    });
+    expect(signalRights(entity).status).toBe('ok');
+  });
+
+  it('passes the creator, who needs no rights spelled out', () => {
+    expect(signalRights(channel({ broadcast: true, creator: true })).status).toBe('ok');
+  });
+
+  // Publishing still works; the typed command just stays sitting above the card.
+  it('warns when the command cannot be deleted afterwards', () => {
+    const entity = channel({ broadcast: true, adminRights: new Api.ChatAdminRights({ postMessages: true }) });
+    const check = signalRights(entity);
+
+    expect(check.status).toBe('warn');
+    expect(check.hint).toContain('Delete Messages');
+  });
+
+  it('fails a broadcast channel this account does not administer', () => {
+    expect(signalRights(channel({ broadcast: true })).status).toBe('fail');
+  });
+
+  // The case postRights cannot catch: posting is open to everyone here, publishing is not.
+  it('fails an ordinary member of a supergroup, who can post but must not publish', () => {
+    expect(postRights(channel({ megagroup: true })).status).toBe('ok');
+    expect(signalRights(channel({ megagroup: true })).status).toBe('fail');
+  });
+
+  it('passes an admin of a supergroup', () => {
+    const entity = channel({ megagroup: true, adminRights: new Api.ChatAdminRights({}) });
+    expect(signalRights(entity).status).toBe('ok');
+  });
+
+  it('fails a basic group this account does not administer', () => {
+    expect(signalRights(chat({})).status).toBe('fail');
+    expect(signalRights(chat({ creator: true })).status).toBe('ok');
   });
 });
 

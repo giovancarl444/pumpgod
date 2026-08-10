@@ -1,6 +1,10 @@
 import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Api, TelegramClient, helpers } from 'telegram';
 import { Router } from '../src/pipeline/router';
+import { Tracker } from '../src/track/tracker';
 import type { AppConfig } from '../src/config';
 import type { ParsedCall, Source } from '../src/types';
 import type { IncomingMessage } from '../src/telegram/ingest';
@@ -16,7 +20,7 @@ interface Sent {
   withPhoto?: boolean;
 }
 
-function harness(overrides: Partial<AppConfig> = {}) {
+function harness(overrides: Partial<AppConfig> = {}, tracker?: Tracker) {
   const sent: Sent[] = [];
   const edits: Array<{ id: number; text: string }> = [];
   let nextId = 100;
@@ -70,7 +74,13 @@ function harness(overrides: Partial<AppConfig> = {}) {
     ...overrides,
   };
 
-  return { router: new Router(client, config, CHANNEL, WAR_ROOM), sent, edits };
+  return { router: new Router(client, config, CHANNEL, WAR_ROOM, tracker), sent, edits };
+}
+
+/** A Tracker pointed at a throwaway file. Never the real store: a call's peak can only be
+ *  measured while it is happening, so anything overwritten there is gone for good. */
+function tracker(): Tracker {
+  return new Tracker(join(mkdtempSync(join(tmpdir(), 'pumpgod-')), 'tracked.json'));
 }
 
 function source(mode: Source['mode'], extra: Partial<Source> = {}): Source {
@@ -441,5 +451,132 @@ describe('Router', () => {
     router.handleReaction({ chatId: 'war', messageId: 999, emoji: '🚀', recvAt: performance.now() });
     await settle();
     expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * What the tracker is left holding, which is the only material a public ranking can be built
+ * from. Every assertion here is about honesty rather than mechanics: a table that credits the
+ * wrong group, or claims a judgement nobody made, is worse than no table.
+ */
+describe('what gets recorded about a call', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const TTL = { dedupeTtlMs: 60 * 60_000 };
+
+  it('gives every group that called a coin its own record', async () => {
+    const t = tracker();
+    const { router } = harness(TTL, t);
+
+    router.handleMessage(incoming(source('shadow', { id: 'fast' })));
+    router.handleMessage(incoming(source('shadow', { id: 'slow' }), CALL_TEXT, 2));
+    await settle();
+
+    expect(t.list().map((c) => c.sourceId).sort()).toEqual(['fast', 'slow']);
+  });
+
+  it('judges a late group on the entry it actually gave, not the first one', async () => {
+    // The whole reason per-source records exist. Keyed on the coin alone, the second group
+    // would inherit the first one's $36K entry — so a table built on it would rank groups by
+    // how early we happen to read them rather than by how well they pick.
+    const t = tracker();
+    const { router } = harness(TTL, t);
+
+    router.handleMessage(incoming(source('shadow', { id: 'fast' })));
+    router.handleMessage(incoming(source('shadow', { id: 'slow' }), CALL_TEXT.replace('$36.27K', '$210K'), 2));
+    await settle();
+
+    const entries = new Map(t.list().map((c) => [c.sourceId, c.entryMcUsd]));
+    expect(entries.get('fast')).toBe(36_270);
+    expect(entries.get('slow')).toBe(210_000);
+  });
+
+  it('records how far behind the first group a duplicate was', async () => {
+    // Derivable only at this moment: `firstSeen` is dropped when the dedupe window rolls
+    // over, and it is the entire basis for "three groups followed over the next 22 minutes".
+    const writes = vi.spyOn(journal, 'write');
+    const { router } = harness(TTL, tracker());
+    const t0 = new Date('2026-08-10T12:00:00Z').getTime();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(t0);
+    router.handleMessage(incoming(source('shadow', { id: 'fast' })));
+    vi.setSystemTime(t0 + 22 * 60_000);
+    router.handleMessage(incoming(source('shadow', { id: 'slow' }), CALL_TEXT, 2));
+
+    const dup = writes.mock.calls.find(([kind]) => kind === 'duplicate')?.[1];
+    expect(dup).toMatchObject({ source: 'slow', first: 'fast', leadMs: 22 * 60_000 });
+  });
+
+  it('marks a call somebody skipped in the war room as declined', async () => {
+    const t = tracker();
+    const { router, sent } = harness({}, t);
+    router.handleMessage(incoming(source('review')));
+    await settle();
+
+    router.handleReaction({ chatId: 'war', messageId: sent[0]!.id, emoji: '👎', recvAt: performance.now() });
+    await settle();
+
+    expect(t.list()[0]!.declined).toBe(true);
+  });
+
+  it('does not call a card nobody reacted to a decision', async () => {
+    // `staged` means it reached the war room, which usually means nobody looked. Posting
+    // "we passed on this" about one of those is the same lie the feed exists to avoid.
+    const t = tracker();
+    const { router } = harness({}, t);
+    router.handleMessage(incoming(source('review')));
+    await settle();
+
+    expect(t.list()[0]!.outcome).toBe('staged');
+    expect(t.list()[0]!.declined).toBeFalsy();
+  });
+
+  it('counts the screen stopping an auto call as a decision', async () => {
+    const t = tracker();
+    const { router } = harness({}, t);
+    const unbacked =
+      'Rugpull Inc | RUG\nCA: 0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90\n📊 Market Cap: $2.00M 💧 Liquidity: $9.00K';
+
+    router.handleMessage(incoming(source('auto'), unbacked));
+    await settle();
+
+    expect(t.list()[0]!.declined).toBe(true);
+    expect(t.list()[0]!.declinedReason).toContain('unbacked');
+  });
+
+  it('does not count the same call reaching review as a decision', async () => {
+    // A review source was always going to the war room. Nothing was decided by arriving.
+    const t = tracker();
+    const { router } = harness({}, t);
+    const unbacked =
+      'Rugpull Inc | RUG\nCA: 0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90\n📊 Market Cap: $2.00M 💧 Liquidity: $9.00K';
+
+    router.handleMessage(incoming(source('review'), unbacked));
+    await settle();
+
+    expect(t.list()[0]!.declined).toBeFalsy();
+  });
+
+  it('stops calling it declined once somebody overrides the screen and publishes', async () => {
+    // Otherwise a coin the screen held back and a human then approved would turn up in the
+    // feed as one we passed on — while sitting in the channel with our name on it.
+    const t = tracker();
+    const { router, sent } = harness({}, t);
+    const unbacked =
+      'Rugpull Inc | RUG\nCA: 0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90\n📊 Market Cap: $2.00M 💧 Liquidity: $9.00K';
+
+    router.handleMessage(incoming(source('auto'), unbacked));
+    await settle();
+    expect(t.list()[0]!.declined).toBe(true);
+
+    router.handleReaction({ chatId: 'war', messageId: sent[0]!.id, emoji: '🚀', recvAt: performance.now() });
+    await settle();
+
+    expect(t.list()[0]!.outcome).toBe('called');
+    expect(t.list()[0]!.declined).toBe(false);
+    expect(t.list()[0]!.declinedReason).toBeUndefined();
   });
 });

@@ -102,6 +102,12 @@ call, so they are proven up front instead:
 - post rights for both destinations, derived from the entity. Nothing is sent: a test message
   flashed into the public channel is visible to members even when it is deleted a second later
 - the war room's reaction settings can carry a 🚀 approve and a 👎 skip
+- `/signal` would actually be honoured in the channel. Posting and publishing are different
+  rights: in a supergroup every member can post, so a setup that passes every check above can
+  still ignore every command typed into it
+- DexScreener prices a coin listed for years, and its artwork downloads — the two hops
+  `/signal` makes before anything reaches Telegram, both of which fail looking like a bot
+  that ignored you
 
 It exits non-zero on anything blocking, so a supervisor can gate the process on it.
 
