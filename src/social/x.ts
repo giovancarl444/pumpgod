@@ -22,6 +22,25 @@ function encode(value: string): string {
   return encodeURIComponent(value).replace(/[!*'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+/** The string that actually gets signed. Exported so it can be checked against X's own
+ *  published example — an unverifiable signature is one that 401s forever in silence. */
+export function signatureBase(method: string, url: string, params: Record<string, string>): string {
+  return [
+    method.toUpperCase(),
+    encode(url),
+    encode(
+      Object.keys(params)
+        .sort()
+        .map((k) => `${encode(k)}=${encode(params[k]!)}`)
+        .join('&'),
+    ),
+  ].join('&');
+}
+
+export function sign(base: string, consumerSecret: string, tokenSecret: string): string {
+  return createHmac('sha1', `${encode(consumerSecret)}&${encode(tokenSecret)}`).update(base).digest('base64');
+}
+
 /**
  * OAuth 1.0a, because posting *as an account* needs user context and app-only bearer tokens
  * cannot do it. A JSON body is not part of the signature base string — only the query and
@@ -37,19 +56,11 @@ function authorization(creds: XCredentials, method: string, url: string): string
     oauth_version: '1.0',
   };
 
-  const base = [
-    method.toUpperCase(),
-    encode(url),
-    encode(
-      Object.keys(params)
-        .sort()
-        .map((k) => `${encode(k)}=${encode(params[k]!)}`)
-        .join('&'),
-    ),
-  ].join('&');
-
-  const key = `${encode(creds.apiSecret)}&${encode(creds.accessSecret)}`;
-  params.oauth_signature = createHmac('sha1', key).update(base).digest('base64');
+  params.oauth_signature = sign(
+    signatureBase(method, url, params),
+    creds.apiSecret,
+    creds.accessSecret,
+  );
 
   return `OAuth ${Object.keys(params)
     .sort()

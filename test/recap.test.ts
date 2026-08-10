@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import type { TrackedCall, Outcome } from '../src/track/tracker';
 import { dailyRecap, milestonePost, reached, summarise, duration } from '../src/social/recap';
 import { Poster } from '../src/social/poster';
-import { tweetLength, TWEET_LIMIT } from '../src/social/x';
+import { tweetLength, TWEET_LIMIT, signatureBase, sign } from '../src/social/x';
+import { createHmac } from 'node:crypto';
 
 const OPTS = { channelUrl: 'https://t.me/pumpgod_fun', minMultiple: 5, dailyRecap: true };
 
@@ -219,5 +220,49 @@ describe('duration', () => {
     expect(duration(360)).toBe('6m');
     expect(duration(4500)).toBe('1h 15m');
     expect(duration(7200)).toBe('2h');
+  });
+});
+
+describe('OAuth 1.0a signing', () => {
+  // X's own worked example, from their "Creating a signature" page. If this vector matches,
+  // the percent-encoding, the parameter sort and the HMAC are all right — and there is no
+  // other way to find that out, because a wrong signature just 401s forever.
+  const params = {
+    include_entities: 'true',
+    oauth_consumer_key: 'xvz1evFS4wEEPTGEFPHBog',
+    oauth_nonce: 'kYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg',
+    oauth_signature_method: 'HMAC-SHA1',
+    oauth_timestamp: '1318622958',
+    oauth_token: '370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb',
+    oauth_version: '1.0',
+    status: 'Hello Ladies + Gentlemen, a signed OAuth request!',
+  };
+  const url = 'https://api.x.com/1.1/statuses/update.json';
+
+  it('builds the base string X documents, byte for byte', () => {
+    expect(signatureBase('post', url, params)).toBe(
+      'POST&https%3A%2F%2Fapi.x.com%2F1.1%2Fstatuses%2Fupdate.json&' +
+        'include_entities%3Dtrue%26oauth_consumer_key%3Dxvz1evFS4wEEPTGEFPHBog' +
+        '%26oauth_nonce%3DkYjzVBB8Y0ZFabxSWbWovY3uYSQ2pTgmZeNu2VS4cg' +
+        '%26oauth_signature_method%3DHMAC-SHA1%26oauth_timestamp%3D1318622958' +
+        '%26oauth_token%3D370773112-GmHxMAgYyLbNEtIKZeRNFsMKPR9EyMZeS9weJAEb' +
+        '%26oauth_version%3D1.0%26status%3DHello%2520Ladies%2520%252B%2520Gentlemen' +
+        '%252C%2520a%2520signed%2520OAuth%2520request%2521',
+    );
+  });
+
+  it('produces the signature X published for it', () => {
+    const signature = sign(
+      signatureBase('POST', url, params),
+      'kAcSOqF21Fu85e7zjz7ZN2U4ZRhfV3WpwPAoE3Z7kBw',
+      'LswwdoUaIvS8ltyTt5jkRh4J50vUPVVHtR2YPi5kE',
+    );
+    expect(signature).toBe('Ls93hJiZbQ3akF3HF3x1Bz8/zU4=');
+  });
+
+  it('escapes the characters encodeURIComponent leaves alone', () => {
+    // RFC 3986 reserves these; leaving them raw is the classic OAuth 1.0a signing bug.
+    const base = signatureBase('POST', url, { a: "!*'()" });
+    expect(base).toContain('a%3D%2521%252A%2527%2528%2529');
   });
 });
