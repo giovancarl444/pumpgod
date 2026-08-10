@@ -133,6 +133,15 @@ describe('the pinned message', () => {
     expect(text).toContain('best · $ZHAO <b>12.4x</b> · 10x in 24m');
     expect(text).not.toContain('12.4x</b> · 2x');
   });
+
+  // This message is pinned at the top of the channel, so it is the one place a stranger's
+  // markup would be read as ours — and the ticker on it is chosen by whoever launched the coin.
+  // A record tracked before `tokenText` started stripping brackets still carries them.
+  it('will not print a link somebody put in a ticker', () => {
+    const text = renderScoreboard(scoreboard([call({ ticker: '<a href="https://evil.example">X</a>' })]))!;
+    expect(text).not.toContain('<a href');
+    expect(text).toContain('&lt;a href');
+  });
 });
 
 describe('keeping the pinned message current', () => {

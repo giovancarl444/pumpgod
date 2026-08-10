@@ -85,6 +85,16 @@ describe('answering a call under its own card', () => {
     expect(due!.text).toContain('$33K → $66K');
     expect(due!.text).toContain('in 10m');
   });
+
+  // A symbol is free text the deployer chose, and this reply goes into the public channel as
+  // HTML. `tokenText` takes the brackets out on the way in, but a record tracked before it did
+  // still carries them — and an unescaped `<` also fails the send outright, which would mean a
+  // coin that can silence its own milestone.
+  it('will not let a coin write markup into the channel', () => {
+    const [due] = followups().due([call({ ticker: '<a href="https://evil.example">X</a>' })]);
+    expect(due!.text).not.toContain('<a href');
+    expect(due!.text).toContain('&lt;a href');
+  });
 });
 
 describe('saying each thing once', () => {

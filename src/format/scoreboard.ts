@@ -1,5 +1,5 @@
 import type { Scoreboard } from '../track/stats';
-import { duration } from './call';
+import { duration, escapeHtml } from './call';
 
 /**
  * The pinned track record.
@@ -27,9 +27,14 @@ export function renderScoreboard(board: Scoreboard, now = new Date()): string | 
   }
 
   lines.push('');
-  if (board.best) lines.push(`best · ${board.best.ticker} <b>${multiple(board.best.multiple)}</b>${run(board.best)}`);
+  // Both tickers are escaped. A symbol is free text chosen by whoever deployed the coin, and
+  // this message is pinned at the top of the channel — the one place a stranger's markup would
+  // be read as ours. `tokenText` takes the brackets out on the way in; this is the second lock.
+  if (board.best) {
+    lines.push(`best · ${escapeHtml(board.best.ticker)} <b>${multiple(board.best.multiple)}</b>${run(board.best)}`);
+  }
   // Named even when it is the same coin as the best: one call, two honest numbers.
-  if (board.worst) lines.push(`worst · ${board.worst.ticker} <b>${multiple(board.worst.multiple)}</b>`);
+  if (board.worst) lines.push(`worst · ${escapeHtml(board.worst.ticker)} <b>${multiple(board.worst.multiple)}</b>`);
 
   const caveats = [
     board.rugged ? `${board.rugged} rugged` : undefined,

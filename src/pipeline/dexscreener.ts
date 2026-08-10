@@ -95,13 +95,46 @@ export function stillImage(url: string | undefined): string | undefined {
 }
 
 /**
+ * How long a name or symbol may be before it is cut. Long enough for the real ones —
+ * "Official Trump" and its imitators all fit — and short enough that a hundred cards still
+ * add up to less than one Telegram message limit.
+ */
+const TEXT_LIMIT = 48;
+
+/**
  * A name or symbol as the deployer typed it, which is not always as it should be shown.
+ *
  * Fartcoin's are `"Fartcoin "` on both fields, and untouched they render the title as
  * `Fartcoin  | FARTCOIN ` and every reply about it as `$FARTCOIN `. Whitespace-only becomes
  * absent, so the card falls back to whichever field is real rather than printing a gap.
+ *
+ * The rest of this is not tidying. Both fields are chosen by whoever deployed the coin, for the
+ * price of a launch, and they end up inside HTML we send to a room of people who are about to
+ * buy something. So a symbol is treated as hostile input rather than as a label:
+ *
+ * - **Angle brackets go.** Render sites escape, and the one that forgets puts a working link
+ *   on our own pinned board inside a message everybody reads as ours. Taking them out here
+ *   makes the next site to forget merely wrong instead of dangerous — and a `<` that reaches
+ *   Telegram unescaped fails the whole send, so the same coin can also silence a milestone.
+ * - **Bidi and zero-width controls go.** A right-to-left override reverses everything printed
+ *   after it, which is how a string is made to read as something other than what it is. Beside
+ *   a contract address is exactly where that must not work.
+ * - **Newlines collapse.** These are printed inline. A name containing one rewrites the shape
+ *   of the card around it and can forge a line we did not write.
+ * - **Length is capped.** The field is unbounded and a Telegram message is not, so without this
+ *   a sufficiently long name is a coin that stops our channel from posting.
  */
 export function tokenText(value: string | undefined): string | undefined {
-  return value?.trim() || undefined;
+  const cleaned = value
+    // Bidi and zero-width controls carry nothing a reader can see, so they simply go.
+    ?.replace(/\p{Cf}/gu, '')
+    // Newlines and brackets become a gap rather than vanishing: deleting the newline out of
+    // "SAFE\nMOON" would print SAFEMOON, which is a different coin and a real one.
+    .replace(/[\p{Cc}<>]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > TEXT_LIMIT ? `${cleaned.slice(0, TEXT_LIMIT - 1).trimEnd()}…` : cleaned;
 }
 
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {

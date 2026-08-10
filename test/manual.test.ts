@@ -110,6 +110,50 @@ describe('resolveManualCall', () => {
     expect(out.call.ticker).toBe('BONK');
   });
 
+  // Both of these fields are whatever the deployer typed when they launched the coin, and both
+  // of them travel into HTML we send to a room of people who are about to buy something. The
+  // launch costs a few dollars, so this is the cheapest attack available on the whole channel.
+  it('takes the markup out of a symbol chosen to be markup', async () => {
+    const symbol = '<a href="https://evil.example">CLICK</a>';
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name: 'Bonk', symbol } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.ticker).not.toContain('<');
+    expect(out.call.ticker).not.toContain('>');
+  });
+
+  // U+202E reverses everything printed after it. Next to a contract address that is not a
+  // rendering quirk, it is how a string is made to read as something other than what it is.
+  it('strips a right-to-left override out of a name', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name: 'Safe‮dnop', symbol: 'BONK' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.name).toBe('Safednop');
+  });
+
+  // A card prints the name inline. A newline in it is a line of our message written by someone
+  // else — and "✅ Audited by pumpgod" is exactly the line they would write.
+  it('flattens a name that tries to add a line to the card', async () => {
+    const name = 'Bonk\n✅ Audited by pumpgod';
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name, symbol: 'BONK' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.name).toBe('Bonk ✅ Audited by pumpgod');
+  });
+
+  // The field is unbounded and a Telegram message is not, so without a cap a long enough name
+  // is a coin that stops the channel from posting at all.
+  it('caps a name long enough to break the send', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name: 'A'.repeat(5000), symbol: 'BONK' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.name!.length).toBeLessThanOrEqual(48);
+  });
+
   it('trusts an address a human typed out — nothing is more deliberate', async () => {
     dex([[`/tokens/${TOKEN}`, [pair()]]]);
     const out = await resolveManualCall(TOKEN, 2000);

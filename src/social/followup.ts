@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
-import { duration, money } from '../format/call';
+import { duration, escapeHtml, money } from '../format/call';
 import type { TrackedCall } from '../track/tracker';
 import type { Peer, Transport } from '../telegram/transport';
 import { bestDue, type Milestone } from './recap';
@@ -124,7 +124,10 @@ export class Followups {
  * message this is attached to, and repeating them would read as calling the coin twice.
  */
 function followupText(call: TrackedCall, milestone: Milestone): string {
-  const ticker = call.ticker ? `$${call.ticker}` : (call.name ?? 'this');
+  // Escaped because a symbol is whatever the deployer typed into the contract, and this goes
+  // into the public channel as HTML. `tokenText` already strips the brackets on the way in;
+  // this is the second lock on the same door, and it costs nothing.
+  const ticker = call.ticker ? `$${escapeHtml(call.ticker)}` : escapeHtml(call.name ?? 'this');
   const parts = [`🚀 <b>${ticker} ${milestone}x</b>`];
 
   if (call.entryMcUsd) {
