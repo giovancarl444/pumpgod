@@ -298,6 +298,55 @@ actually published.
 
 That table is the promotion rule: `shadow` → `review` → `auto` on the numbers, not on vibes.
 
+## The receipt, in the channel
+
+A number posted on its own is a claim. The same number hanging under the original card — one
+scroll from the entry price, in a message with a timestamp nobody can edit — is a receipt.
+Two things run on that difference, both off the tracker, both without anyone typing.
+
+**Milestones answer their own call.** When a call reaches 2x, 5x, 10x and up, the bot replies
+underneath the card that made it:
+
+```
+  🚀 $ZHAO 10x · $33.2K → $332K · in 24m
+```
+
+Only the best milestone a coin has reached is sent, so a run to 10x does not also produce a
+5x reply. Below 10x it lands silently: a 2x is a good afternoon, not a reason to buzz every
+phone in the channel. A reply whose original card has been deleted still posts, unthreaded —
+losing the thread beats losing the milestone.
+
+**The pinned record edits itself.** One pinned message, rewritten in place whenever a number
+moves:
+
+```
+  📊 pumpgod · track record
+
+  34 calls since 10 Aug
+  14 hit 2x · 6 hit 5x · 2 hit 10x (of 32 priced)
+  median peak 1.84x
+
+  best · $ZHAO 24.1x · 10x in 24m
+  worst · $WIF 0.21x
+  3 rugged · 2 we could not price
+```
+
+The worst call is on there on purpose, and so is the denominator, the rug count and the
+number we could not price at all. A rate quoted without them is the trick every other group
+is running. The worst is measured on where a call stands *now*, not on its peak — a peak is
+never below 1x, so a record built only on peaks can never show a loss.
+
+```bash
+npm run scoreboard            # preview it
+npm run scoreboard -- --pin   # post and pin it, once
+```
+
+Creating it is deliberately a one-shot script and not something the daemon can do. Pinning
+notifies the channel and replaces whatever was pinned before; nothing that runs on a timer
+should be able to do that. After it exists, the daemon only ever edits it — and skips the
+edit entirely when nothing changed, because Telegram rejects an unchanged edit and would
+otherwise 400 on every cycle forever.
+
 ## Growing the channel
 
 A call group grows on proof, and every call we publish is already measured: entry, peak, and
@@ -371,17 +420,33 @@ none of the custody, and is the right shape when the time comes.
 
 ## Roadmap
 
-**Phase 1 (this)** — track groups, relay what we like, measure everything.
+The bet is that in a market where every screenshot is fake and every group posts only its
+winners, the group that publishes its own losses automatically is doing something nobody can
+copy with a screenshot editor. Everything below serves that.
 
-**Phase 2 — stop being second.** Relaying another group is by definition behind them.
-The edge is detecting on-chain: new pool creation on Solana/Base via a geyser or mempool
-feed, which puts us ahead of every group we currently follow rather than behind them.
-The journal from phase 1 is what tells us which signals are worth acting on.
+**Done — the receipts machine.** `/signal` publishes a card, the tracker re-prices it for 24
+hours, milestones are reported under the call that earned them, and the pinned record edits
+itself. Peaks are settled against on-chain candles when a call retires, so a restart cannot
+understate a run.
 
-**Phase 3 — distribution.** The X feed above is the first half. The second is TikTok:
-auto-generated recap videos of calls that ran, rendered straight from `data/tracked.json` —
-it already holds the entry, the peak and how long the run took, which is exactly what a recap
-needs. Remotion is a React renderer for video, which is why this is a TypeScript codebase.
+**Next — the eyes.** A reader account, then every rival group in `shadow` mode. After ~20
+calls per source the scorecard says which are worth copying, and only then do any of them get
+promoted to `review` or `auto`. Blocked on a login; see [CHECKLIST.md](CHECKLIST.md).
+
+**Then — an interactive surface.** Inline buttons and `callback_query`, which nothing here
+uses yet. Needed on its own merits, and a prerequisite for the one after it.
+
+**Then — member calls.** Members submit picks by DM, tracked privately in the same tracker,
+ranked on median peak with a minimum sample. Turns lurkers into competitors and gives people
+who never call anything a reason to stay. Member picks can never reach the public feed —
+`isPublished()` is the single gate and it stays that way.
+
+**Then — distribution.** X media cards, then TikTok recap videos rendered straight from
+`data/tracked.json`, which already holds the entry, the peak and how long the run took.
+Remotion is a React renderer for video, which is why this is a TypeScript codebase. This is
+a machine for amplifying proof, so it comes after there is proof.
+
+**Cut:** on-chain pool detection. Sourcing coins is not the bottleneck.
 
 ## Layout
 
@@ -393,7 +458,7 @@ src/
   format/     message rendering
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
-  track/      outcome tracking — entry, peak, milestones, rugs
-  social/     X feed — milestone posts, daily recap, OAuth 1.0a posting
-scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap
+  track/      outcome tracking — entry, peak, milestones, rugs; and what it all adds up to
+  social/     the record, published — X feed, in-channel milestone replies, pinned scoreboard
+scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap, scoreboard
 ```
