@@ -1,4 +1,25 @@
-import type { Chain } from '../types';
+import type { AddressKind, Chain } from '../types';
+
+/**
+ * What an address on each chain looks like. Lets a caller rule a chain out from the address
+ * shape alone, before spending a network round trip confirming what base58 already proved.
+ */
+export const CHAIN_KIND: Record<Chain, AddressKind | undefined> = {
+  solana: 'solana',
+  tron: 'tron',
+  sui: 'sui',
+  ton: 'ton',
+  ethereum: 'evm',
+  base: 'evm',
+  bsc: 'evm',
+  arbitrum: 'evm',
+  polygon: 'evm',
+  avalanche: 'evm',
+  blast: 'evm',
+  hyperliquid: 'evm',
+  robinhood: 'evm',
+  unknown: undefined,
+};
 
 /**
  * Slugs used by DexScreener/DexTools/GMGN in chart URLs, mapped onto our chain ids.

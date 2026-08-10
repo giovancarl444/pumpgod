@@ -44,6 +44,9 @@ export interface ParsedCall {
   name?: string;
   ticker?: string;
   stats: Stats;
+  /** The coin's own artwork, as the market indexed it. Only ever set from live market data —
+   *  a source group's message cannot supply one, so a relayed call has none until enrichment. */
+  imageUrl?: string;
   /** Every address seen, best-first. Kept for debugging bad parses. */
   candidates: TokenRef[];
 }

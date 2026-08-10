@@ -36,9 +36,22 @@ afterEach(() => {
 
 describe('parseCommand', () => {
   it('takes the address after the command word', () => {
+    expect(parseCommand(`/signal ${TOKEN}`)).toBe(TOKEN);
+    expect(parseCommand(`signal ${TOKEN}`)).toBe(TOKEN);
     expect(parseCommand(`call ${TOKEN}`)).toBe(TOKEN);
     expect(parseCommand(`/call ${TOKEN}`)).toBe(TOKEN);
     expect(parseCommand(`CALL: ${TOKEN}`)).toBe(TOKEN);
+  });
+
+  // Telegram appends the handle when a command is tapped from a group's autocomplete, so
+  // the tapped form has to mean the same thing as the typed one.
+  it('accepts the @handle suffix Telegram adds in groups', () => {
+    expect(parseCommand(`/signal@realpumpgod_bot ${TOKEN}`)).toBe(TOKEN);
+  });
+
+  it('takes a chart link as readily as an address', () => {
+    const url = `https://dexscreener.com/solana/${POOL}`;
+    expect(parseCommand(`/signal ${url}`)).toBe(url);
   });
 
   it('ignores an address discussed without the command word', () => {
@@ -49,10 +62,18 @@ describe('parseCommand', () => {
 
   it('ignores the command word with nothing after it', () => {
     expect(parseCommand('call')).toBeUndefined();
+    expect(parseCommand('/signal')).toBeUndefined();
   });
 
-  it('does not fire on a word that merely starts with call', () => {
+  it('does not fire on a word that merely starts with the command', () => {
     expect(parseCommand('calling it here')).toBeUndefined();
+    expect(parseCommand('signalling the group now')).toBeUndefined();
+  });
+
+  // Our own published cards come back through ingest as messages from this account. If any
+  // of them parsed as a command, the channel would call itself in a loop.
+  it('does not fire on our own published card', () => {
+    expect(parseCommand(`PUMPGOD ⚡\nTroll in Hood | TROLL\n\nCA:\n${TOKEN}`)).toBeUndefined();
   });
 });
 
@@ -145,6 +166,14 @@ describe('resolveManualCall', () => {
     expect(out.ok).toBe(false);
   });
 
+  it('carries the coin artwork through, so the card can be posted as a photo', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ info: { imageUrl: 'https://cdn.example/bonk.png' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.imageUrl).toBe('https://cdn.example/bonk.png');
+  });
+
   it('separates a failed lookup from a token that is genuinely not listed', async () => {
     // One is worth retrying and the other is not, so they must not read the same.
     vi.stubGlobal(
@@ -155,5 +184,46 @@ describe('resolveManualCall', () => {
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.reason).toContain('did not answer');
+  });
+});
+
+// Whoever pasted the address is standing there waiting, so a refusal has to say which rule
+// it broke. The router drops an off-chain call silently; this path never should.
+describe('resolveManualCall with a chain restriction', () => {
+  it('publishes a solana coin when solana is what we call', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair()]]]);
+    const out = await resolveManualCall(TOKEN, 2000, ['solana']);
+
+    expect(out.ok).toBe(true);
+  });
+
+  it('rejects an EVM address from its shape alone, without a round trip', async () => {
+    // base58 is never an EVM contract and 0x… is never a mint, so the wrong paste — which is
+    // the common one while we are solana-only — answers instantly.
+    const seen = dex([]);
+    const out = await resolveManualCall('0x1111111111111111111111111111111111111111', 2000, ['solana']);
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toContain('EVM address');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('rejects a coin the market places on a chain the shape could not rule out', async () => {
+    // Every EVM chain shares one address format, so `0x…` restricted to base gets past the
+    // shape gate and can only be refused once DexScreener says which chain it is really on.
+    const evm = '0x1111111111111111111111111111111111111111';
+    dex([[`/tokens/${evm}`, [pair({ chainId: 'ethereum', baseToken: { address: evm, symbol: 'x' } })]]]);
+
+    const out = await resolveManualCall(evm, 2000, ['base']);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toContain('ethereum');
+    expect(out.reason).toContain('base');
+  });
+
+  it('calls any chain when no restriction is set', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ chainId: 'base' })]]]);
+    expect((await resolveManualCall(TOKEN, 2000, [])).ok).toBe(true);
   });
 });

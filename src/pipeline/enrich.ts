@@ -19,6 +19,7 @@ export async function enrich(call: ParsedCall, timeoutMs: number): Promise<Parti
     pairAddress: best.pairAddress ?? call.pairAddress,
     name: best.baseToken?.name ?? call.name,
     ticker: best.baseToken?.symbol?.toUpperCase() ?? call.ticker,
+    imageUrl: view.imageUrl ?? call.imageUrl,
     // The market's numbers replace the source's claim outright rather than filling gaps in
     // it — a stat the source got wrong is worse than one it never gave.
     stats: { ...call.stats, ...stats },

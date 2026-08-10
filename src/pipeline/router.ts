@@ -4,6 +4,7 @@ import type { ParsedCall, Signal, Source } from '../types';
 import { parseCall } from '../parse';
 import { renderPublicCall, renderWarRoomCall } from '../format/call';
 import { editFast, sendFast } from '../telegram/send';
+import { sendPhoto } from '../telegram/photo';
 import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
@@ -40,6 +41,20 @@ interface Staged {
   stagedAt: number;
   fired: boolean;
 }
+
+/**
+ * What routing decided about a call.
+ *
+ * A relayed call ignores this — there is nobody to tell. A call somebody typed cannot: an
+ * admin who runs `/signal` and gets silence has no way to distinguish "held back because the
+ * pool is thin" from "the bot is down", and the command message has already been deleted by
+ * then. Every path out of `route` therefore names itself.
+ */
+export type RouteDecision =
+  | { kind: 'publishing' }
+  | { kind: 'review'; reason: string }
+  | { kind: 'duplicate'; sources: string[] }
+  | { kind: 'dropped'; reason: string };
 
 /** A call ready to be judged, however we came by it. */
 export interface RouteInput {
@@ -102,9 +117,19 @@ export class Router {
    * Telegram message — the checks that protect the channel should not depend on how we
    * heard about the coin.
    */
-  route(input: RouteInput): void {
+  route(input: RouteInput): RouteDecision {
     const { source, call } = input;
-    if (!passesFilters(source, call)) return;
+
+    // Ahead of the per-source filters because this one is not a preference — it is the set
+    // of chains we can price, screen and route a buy on. A call we cannot check is one we
+    // cannot stand behind, whichever source it came from and however we were told about it.
+    if (this.config.chains.length && !this.config.chains.includes(call.token.chain)) {
+      log.debug(`skipped ${call.token.address} on ${call.token.chain} — not in CHAINS`);
+      return { kind: 'dropped', reason: `${call.token.chain} is not a chain we call` };
+    }
+    if (!passesFilters(source, call)) {
+      return { kind: 'dropped', reason: `filtered out by source "${source.id}"` };
+    }
 
     const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, source.id);
 
@@ -135,9 +160,24 @@ export class Router {
     };
 
     if (!first) {
-      log.debug(`dup ${call.token.address} (${entry.sources.join(', ')})`);
-      journal.write('duplicate', { id: signal.id, source: source.id, address: call.token.address });
-      return;
+      // How far behind the first group this one was. Only derivable here: `firstSeen` is gone
+      // once the dedupe window rolls over, and it is the whole basis for "we posted it at
+      // $41K, three groups followed over the next 22 minutes".
+      const leadMs = Date.now() - entry.firstSeen;
+      log.debug(`dup ${call.token.address} (${entry.sources.join(', ')}) +${Math.round(leadMs / 1000)}s`);
+      journal.write('duplicate', {
+        id: signal.id,
+        source: source.id,
+        chain: call.token.chain,
+        address: call.token.address,
+        first: entry.sources[0],
+        leadMs,
+      });
+      // Tracked against its own source rather than dropped. A group that called this twenty
+      // minutes late gets the entry it actually gave — which is exactly what a table
+      // comparing them is supposed to show.
+      this.tracker?.track(signal, 'duplicate');
+      return { kind: 'duplicate', sources: entry.sources };
     }
 
     if (source.mode === 'shadow') {
@@ -146,7 +186,7 @@ export class Router {
       // Tracked anyway — knowing what a source *would* have made us is the whole
       // reason shadow mode exists.
       this.tracker?.track(signal, 'shadow');
-      return;
+      return { kind: 'dropped', reason: `source "${source.id}" is in shadow mode` };
     }
 
     // Two things override a source's mode, both for the same reason: publishing them as
@@ -156,13 +196,21 @@ export class Router {
     const divert = signal.stale || signal.risk.level === 'danger';
     if (source.mode === 'auto' && !divert) {
       void this.fire(signal);
-    } else {
-      if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
-      if (signal.risk.level === 'danger') {
-        log.warn(`⚠️  ${label(signal)} — ${signal.risk.flags.map((f) => f.detail).join('; ')}`);
-      }
-      void this.stage(signal);
+      return { kind: 'publishing' };
     }
+
+    if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
+    if (signal.risk.level === 'danger') {
+      log.warn(`⚠️  ${label(signal)} — ${signal.risk.flags.map((f) => f.detail).join('; ')}`);
+      // Only for an auto source, because only there did anything actually decide. This call
+      // was on its way to the channel and the screen stopped it. A review source was always
+      // going to the war room, and arriving there is not a judgement anybody made.
+      if (source.mode === 'auto') {
+        this.tracker?.decline(signal, signal.risk.flags.find((f) => f.level === 'danger')?.detail);
+      }
+    }
+    void this.stage(signal);
+    return { kind: 'review', reason: reviewReason(signal, source) };
   }
 
   /**
@@ -170,9 +218,9 @@ export class Router {
    * resolved before this point, so it arrives at the same gates a relayed call reaches —
    * dedupe, screening, publish — already carrying real numbers to be judged on.
    */
-  callManual(call: ParsedCall, rawText: string, recvAt: number): void {
+  callManual(call: ParsedCall, rawText: string, recvAt: number): RouteDecision {
     const now = performance.now();
-    this.route({
+    return this.route({
       source: MANUAL_SOURCE,
       call,
       chatId: 'manual',
@@ -197,7 +245,17 @@ export class Router {
 
     try {
       const html = renderPublicCall(signal, this.config);
-      const sent = await sendFast(this.client, this.channelPeer, html, { stage: 'send.public' });
+      // A relayed call has no artwork yet — it arrives as text from another group, and the
+      // image only exists once enrichment has been to the market. So this attaches a photo
+      // for calls we resolved up front, and stays a plain fast send for the ones we are
+      // racing somebody on. That is the right trade in both directions.
+      const image = this.config.showImage ? signal.call.imageUrl : undefined;
+      const sent = image
+        ? await sendPhoto(this.client, this.channelPeer, image, html, {
+            stage: 'send.public',
+            timeoutMs: this.config.enrichTimeoutMs,
+          })
+        : await sendFast(this.client, this.channelPeer, html, { stage: 'send.public' });
 
       signal.timings.dispatchAt = sent.dispatchAt;
       signal.timings.ackAt = sent.ackAt;
@@ -282,6 +340,9 @@ export class Router {
       staged.fired = true;
       log.info(`⏭️  skipped ${label(staged.signal)}`);
       journal.write('skipped', { id: staged.signal.id });
+      // Somebody read this card and said no. That is the only thing that makes a later "we
+      // passed on this" post true rather than a card nobody opened.
+      this.tracker?.decline(staged.signal, staged.signal.risk.flags[0]?.detail);
       return;
     }
 
@@ -326,4 +387,17 @@ export class Router {
 function label(signal: Signal): string {
   const t = signal.call.ticker ? `$${signal.call.ticker}` : signal.call.token.address.slice(0, 10);
   return `${t} (${signal.call.token.chain})`;
+}
+
+/**
+ * Why a call went to review rather than the channel. Reads the screen's own wording, so the
+ * admin is told the same thing the war-room card shows rather than a second paraphrase of it
+ * that can drift.
+ */
+function reviewReason(signal: Signal, source: Source): string {
+  const reasons = signal.risk.flags.filter((f) => f.level === 'danger').map((f) => f.detail);
+  if (signal.stale) reasons.push(`it is ${signal.ageSec}s old`);
+  // Neither gate fired, so the source is simply set to be approved by hand.
+  if (!reasons.length) reasons.push(`source "${source.id}" is set to manual review`);
+  return reasons.join('; ');
 }

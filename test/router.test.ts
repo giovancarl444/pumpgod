@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 import { Api, TelegramClient, helpers } from 'telegram';
 import { Router } from '../src/pipeline/router';
 import type { AppConfig } from '../src/config';
@@ -13,6 +13,7 @@ interface Sent {
   peer: Api.TypeInputPeer;
   text: string;
   id: number;
+  withPhoto?: boolean;
 }
 
 function harness(overrides: Partial<AppConfig> = {}) {
@@ -21,10 +22,17 @@ function harness(overrides: Partial<AppConfig> = {}) {
   let nextId = 100;
 
   const client = {
+    uploadFile: async () =>
+      new Api.InputFile({ id: helpers.generateRandomLong(), parts: 1, name: 'coin.png', md5Checksum: '' }),
     invoke: async (req: unknown) => {
-      if (req instanceof Api.messages.SendMessage) {
+      if (req instanceof Api.messages.SendMessage || req instanceof Api.messages.SendMedia) {
         const id = ++nextId;
-        sent.push({ peer: req.peer as Api.TypeInputPeer, text: req.message ?? '', id });
+        sent.push({
+          peer: req.peer as Api.TypeInputPeer,
+          text: req.message ?? '',
+          id,
+          withPhoto: req instanceof Api.messages.SendMedia,
+        });
         return { updates: [new Api.UpdateMessageID({ id, randomId: helpers.generateRandomLong() })] };
       }
       if (req instanceof Api.messages.EditMessage) {
@@ -55,6 +63,10 @@ function harness(overrides: Partial<AppConfig> = {}) {
     tradeUrlSol: 'https://axiom.trade/t/{address}',
     tradeUrlEvm: '',
     referralLabel: 'Trade these faster',
+    // These tests are about routing mechanics, not chain policy, so the gate is open by
+    // default here and exercised deliberately below. Production ships solana-only.
+    chains: [],
+    showImage: false,
     ...overrides,
   };
 
@@ -252,6 +264,92 @@ describe('Router', () => {
     expect(sent[0]!.text).toContain('WIF');
   });
 
+  describe('the coin image', () => {
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    const served = () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'image/png' }),
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      }) as unknown as Response;
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('rides along with the card when the call carries one', async () => {
+      vi.stubGlobal('fetch', async () => served());
+      const { router, sent } = harness({ showImage: true });
+
+      const call = manualCall();
+      call.imageUrl = 'https://cdn.dexscreener.com/coin.png';
+      router.callManual(call, `/signal ${MANUAL_ADDRESS}`, performance.now());
+      await settle();
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.withPhoto).toBe(true);
+      expect(sent[0]!.text).toContain('WIF');
+    });
+
+    it('is skipped without a second thought when SHOW_IMAGE is off', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const { router, sent } = harness({ showImage: false });
+
+      const call = manualCall();
+      call.imageUrl = 'https://cdn.dexscreener.com/coin.png';
+      router.callManual(call, `/signal ${MANUAL_ADDRESS}`, performance.now());
+      await settle();
+
+      expect(sent[0]!.withPhoto).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    // A relayed call is a race, and the coin has no indexed artwork at that point anyway.
+    it('never costs the relay path a round trip', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const { router, sent } = harness({ showImage: true });
+
+      router.handleMessage(incoming(source('auto')));
+      await settle();
+
+      expect(sent[0]!.withPhoto).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // The gate sits above every other check, because it is not a preference — it is the set of
+  // chains we can actually price, screen and route a buy on.
+  describe('the chain gate', () => {
+    it('drops a call on a chain we are not covering, whatever the source mode', async () => {
+      const { router, sent } = harness({ chains: ['solana'] });
+      router.handleMessage(incoming(source('auto')));
+      router.handleMessage(incoming(source('review'), CALL_TEXT, 2));
+      await settle();
+
+      expect(sent).toHaveLength(0);
+    });
+
+    it('does not let a manual call bypass it either', async () => {
+      const { router, sent } = harness({ chains: ['base'] });
+      router.callManual(manualCall(), `/signal ${MANUAL_ADDRESS}`, performance.now());
+      await settle();
+
+      expect(sent).toHaveLength(0);
+    });
+
+    it('lets through a call on a chain we are covering', async () => {
+      const { router, sent } = harness({ chains: ['solana'] });
+      router.callManual(manualCall(), `/signal ${MANUAL_ADDRESS}`, performance.now());
+      await settle();
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.peer).toBe(CHANNEL);
+    });
+  });
+
   it('does not re-fetch market data it already has', async () => {
     // Manual calls resolve before publishing, so the post-publish enrich pass would be a
     // second round trip that could only overwrite fresher numbers with the same ones.
@@ -290,6 +388,52 @@ describe('Router', () => {
     await settle();
 
     expect(sent).toHaveLength(1);
+  });
+
+  // `/signal` deletes the command message on the way in, so whatever routing decides is the
+  // only thing the admin has left to go on. A decision nobody reports back is a bot that
+  // looks broken every time it is being careful.
+  describe('what it reports back about a typed call', () => {
+    it('says it is publishing when the coin goes to the channel', async () => {
+      const { router } = harness();
+      expect(router.callManual(manualCall(), '/signal x', performance.now())).toEqual({ kind: 'publishing' });
+      await settle();
+    });
+
+    it('names the screen flag that held the coin back', async () => {
+      const { router } = harness();
+      const out = router.callManual(
+        manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }),
+        '/signal x',
+        performance.now(),
+      );
+      await settle();
+
+      expect(out.kind).toBe('review');
+      if (out.kind !== 'review') return;
+      expect(out.reason).toContain('unbacked');
+    });
+
+    it('says which chain it refused, rather than dropping the coin quietly', async () => {
+      const { router } = harness({ chains: ['base'] });
+      const out = router.callManual(manualCall(), '/signal x', performance.now());
+      await settle();
+
+      expect(out).toEqual({ kind: 'dropped', reason: 'solana is not a chain we call' });
+    });
+
+    it('reports the second paste of a coin as a duplicate, not a failure', async () => {
+      const { router } = harness();
+      router.callManual(manualCall(), '/signal x', performance.now());
+      await settle();
+
+      const out = router.callManual(manualCall(), '/signal x', performance.now());
+      await settle();
+
+      expect(out.kind).toBe('duplicate');
+      if (out.kind !== 'duplicate') return;
+      expect(out.sources).toContain('manual');
+    });
   });
 
   it('ignores a reaction on a message it never staged', async () => {

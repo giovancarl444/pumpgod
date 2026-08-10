@@ -48,7 +48,7 @@ export async function editFast(
   );
 }
 
-function extractMessageId(result: Api.TypeUpdates): number | undefined {
+export function extractMessageId(result: Api.TypeUpdates): number | undefined {
   const updates = result as { updates?: Api.TypeUpdate[]; id?: number };
   if (typeof updates.id === 'number') return updates.id;
   for (const u of updates.updates ?? []) {

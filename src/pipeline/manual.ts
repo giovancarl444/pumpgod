@@ -1,6 +1,6 @@
 import type { Chain, ParsedCall, Source, TokenRef } from '../types';
 import { classifyAddress, extractAddresses } from '../parse/addresses';
-import { chainFromSlug } from '../parse/chains';
+import { CHAIN_KIND, chainFromSlug } from '../parse/chains';
 import { aggregate, pairsForToken, search, type TokenView } from './dexscreener';
 
 /**
@@ -20,12 +20,16 @@ export type ManualOutcome =
   | { ok: false; reason: string };
 
 /**
- * `call <address>` typed in the war room. The command word is required rather than treating
- * any pasted address as a call, because the war room is also where we talk about coins —
- * and a discussion that publishes itself is a footgun with no undo.
+ * `/signal <address>` — the one command that publishes a coin of our own. `call` works too,
+ * and Telegram's `/signal@thebot` suffix is tolerated so tapping the command from a group's
+ * autocomplete does the same thing as typing it.
+ *
+ * The command word is required rather than treating any pasted address as a call, because
+ * the war room is also where we talk about coins — and a discussion that publishes itself is
+ * a footgun with no undo.
  */
 export function parseCommand(text: string): string | undefined {
-  const match = /^\s*\/?call\b[\s:]*/i.exec(text);
+  const match = /^\s*\/?(?:signal|call)(?:@\w+)?\b[\s:]*/i.exec(text);
   if (!match) return undefined;
   return text.slice(match[0].length).trim() || undefined;
 }
@@ -39,11 +43,26 @@ export function parseCommand(text: string): string | undefined {
  * difference between first and second; a call we make ourselves is racing nobody. And an
  * address on its own has no numbers attached, so the tradability screen would have nothing
  * to read and would pass everything — the one guarantee worth keeping.
+ *
+ * `chains` restricts what we are willing to call. Passing it here as well as at the router
+ * means a rejected paste gets told why, instead of being silently dropped.
  */
-export async function resolveManualCall(input: string, timeoutMs: number): Promise<ManualOutcome> {
+export async function resolveManualCall(
+  input: string,
+  timeoutMs: number,
+  chains?: Chain[],
+): Promise<ManualOutcome> {
   const query = addressIn(input);
   if (!query) {
     return { ok: false, reason: 'no contract address in that — paste an address or a chart link' };
+  }
+
+  // An address's own shape already rules chains in or out — base58 is never an EVM contract.
+  // Checking it here means the common wrong paste answers instantly instead of after a
+  // round trip to an API that was never going to have it.
+  const kind = classifyAddress(query)?.kind;
+  if (kind && chains?.length && !chains.some((c) => CHAIN_KIND[c] === kind)) {
+    return { ok: false, reason: `that is ${kind === 'evm' ? 'an EVM' : `a ${kind}`} address — we are only calling ${chains.join('/')} right now` };
   }
 
   const resolved = await asToken(query, timeoutMs);
@@ -68,6 +87,13 @@ export async function resolveManualCall(input: string, timeoutMs: number): Promi
     confidence: 1,
   };
 
+  if (chains?.length && !chains.includes(token.chain)) {
+    return {
+      ok: false,
+      reason: `${short(address)} is on ${token.chain}, and we are only calling ${chains.join('/')} right now`,
+    };
+  }
+
   return {
     ok: true,
     query,
@@ -77,6 +103,7 @@ export async function resolveManualCall(input: string, timeoutMs: number): Promi
       name: best.baseToken?.name,
       ticker: best.baseToken?.symbol?.toUpperCase(),
       stats,
+      imageUrl: view.imageUrl,
       candidates: [token],
     },
   };

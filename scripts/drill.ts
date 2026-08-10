@@ -6,7 +6,7 @@ import { sendFast } from '../src/telegram/send';
 import { Router, passesFilters } from '../src/pipeline/router';
 import { assess } from '../src/pipeline/risk';
 import { parseCall } from '../src/parse';
-import { Tracker, type Outcome } from '../src/track/tracker';
+import { Tracker, type Outcome, type TrackedCall } from '../src/track/tracker';
 import { journal } from '../src/store/journal';
 import type { ParsedCall, Signal, Source } from '../src/types';
 
@@ -65,8 +65,18 @@ function drillMessage(mint: string, pool: string): string {
 class DrillWatch extends Tracker {
   readonly seen: Array<{ signal: Signal; outcome: Outcome }> = [];
 
-  override track(signal: Signal, outcome: Outcome): void {
+  override track(signal: Signal, outcome: Outcome): TrackedCall {
     this.seen.push({ signal, outcome });
+    // Returned rather than stored, so a caller that decorates the entry — `decline` does —
+    // still has something to write to while the drill's fake coin stays out of the scorecard.
+    return {
+      id: signal.id,
+      sourceId: signal.source.id,
+      outcome,
+      chain: signal.call.token.chain,
+      address: signal.call.token.address,
+      calledAt: Date.now(),
+    };
   }
 }
 
@@ -229,6 +239,16 @@ async function main(): Promise<number> {
     );
   }
 
+  // The drill call is a solana mint, so a CHAINS list without solana drops it in the router
+  // before any of this is exercised. Same reasoning as the source check above: a run that
+  // proves nothing must not be allowed to look like a clean one.
+  if (config.chains.length && !config.chains.includes('solana')) {
+    return fail(
+      `CHAINS is set to ${config.chains.join('/')}, and the drill call is solana — the router would drop it.`,
+      'set CHAINS=solana (or CHAINS=all) in .env to run the drill',
+    );
+  }
+
   if (!passesFilters(matched, expected)) {
     return fail(
       `source "${matched.id}" filters this call out before it reaches the pipeline.`,
@@ -268,7 +288,7 @@ async function main(): Promise<number> {
   const router = new Router(client, drillConfig, destPeer, undefined, watch);
 
   let detected: IncomingMessage | undefined;
-  const onUpdate = attachIngest(client, new Map([[targetKey, drillSource]]), undefined, {
+  const onUpdate = attachIngest(client, new Map([[targetKey, drillSource]]), {}, {
     onMessage: (msg) => {
       // Matched on the address rather than the message id: the update can arrive before the
       // send RPC has returned the id it was given.

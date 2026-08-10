@@ -2,6 +2,9 @@ node_modules/
 dist/
 *.log
 
+# Local tool permissions, per machine
+.claude/
+
 # Secrets — never commit
 .env
 .env.*

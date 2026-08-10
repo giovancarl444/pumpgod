@@ -11,6 +11,8 @@ export interface DexPair {
   volume?: { h24?: number };
   baseToken?: { address?: string; name?: string; symbol?: string };
   pairCreatedAt?: number;
+  /** Present once DexScreener has indexed the token's profile. Absent on very new launches. */
+  info?: { imageUrl?: string };
 }
 
 const BASE = 'https://api.dexscreener.com/latest/dex';
@@ -56,6 +58,8 @@ export interface TokenView {
   /** Deepest pool: what a buyer actually trades against, and the chart worth linking to. */
   best: DexPair;
   stats: Stats;
+  /** The coin's artwork, if any pool carries a profile for it. */
+  imageUrl?: string;
 }
 
 /**
@@ -81,6 +85,9 @@ export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | u
 
   return {
     best,
+    // Read across every pool rather than off `best`: the profile hangs off the token, but
+    // DexScreener only attaches it to the pools it has indexed, which need not be the deepest.
+    imageUrl: own.map((p) => p.info?.imageUrl).find((url): url is string => Boolean(url)),
     stats: {
       marketCapUsd: best.marketCap ?? best.fdv,
       liquidityUsd,

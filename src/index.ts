@@ -1,7 +1,8 @@
 import { loadConfig, loadSocial, loadSources, normalisePeerId } from './config';
 import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
-import { attachIngest } from './telegram/ingest';
+import { attachIngest, type IncomingCommand } from './telegram/ingest';
+import { AdminCheck, deleteMessage } from './telegram/admin';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Tracker } from './track/tracker';
 import { Router } from './pipeline/router';
@@ -37,6 +38,7 @@ async function main() {
   const channelPeer = config.channel ? await resolveInputPeer(client, config.channel) : undefined;
   const warRoomPeer = config.warRoom ? await resolveInputPeer(client, config.warRoom) : undefined;
   const warRoomId = warRoomPeer ? peerIdOf(warRoomPeer) : undefined;
+  const channelId = channelPeer ? peerIdOf(channelPeer) : undefined;
 
   // Resolving every source up front means the hot path is a single Map lookup on an id
   // we already hold, with no chance of a mid-call network resolution.
@@ -68,30 +70,72 @@ async function main() {
   const catchup = new Catchup(client);
   catchup.load();
 
-  // `call <address>` in the war room publishes a coin of our own.
-  const say = async (text: string) => {
-    if (!warRoomPeer) return;
-    await sendFast(client, warRoomPeer, text, { stage: 'send.warroom' }).catch(() => undefined);
+  // `/signal <address>` publishes a coin of our own.
+  const admins = new AdminCheck(client, channelPeer);
+
+  // The war room takes every reply it can, because the public channel should carry calls and
+  // nothing else — a member scrolling past "✗ no pool found" learns only that we fumbled.
+  // With no war room configured there is nowhere else to answer, and silence after a command
+  // that deleted itself is worse than the clutter, so it goes back to the channel.
+  const say = async (text: string, cmd?: IncomingCommand) => {
+    const peer = warRoomPeer ?? (cmd?.fromChannel ? channelPeer : undefined);
+    if (!peer) return;
+    await sendFast(client, peer, text, { stage: 'send.warroom' }).catch(() => undefined);
   };
 
-  const handleCommand = async (cmd: { text: string; recvAt: number }) => {
+  const handleCommand = async (cmd: IncomingCommand) => {
     const argument = parseCommand(cmd.text);
     if (!argument) return;
 
+    if (cmd.fromChannel) {
+      if (!(await admins.allows(cmd))) {
+        log.warn(`ignored /signal from a non-admin in the channel (${cmd.fromId ?? 'unknown'})`);
+        return;
+      }
+      // Take the instruction down first. If resolving is slow, the channel should not be
+      // sitting there showing the command while it waits.
+      if (channelPeer) {
+        await deleteMessage(client, channelPeer, cmd.messageId).catch((err: Error) =>
+          log.debug(`could not delete the command message: ${err.message}`),
+        );
+      }
+    }
+
     // Resolving market data first is what makes this callable at all: an address on its own
     // has no numbers for the screen to read. Nobody is being raced, so the hop is free.
-    const outcome = await resolveManualCall(argument, Math.max(config.enrichTimeoutMs, 5000));
+    const outcome = await resolveManualCall(argument, Math.max(config.enrichTimeoutMs, 5000), config.chains);
     if (!outcome.ok) {
       log.warn(`manual call rejected: ${outcome.reason}`);
-      await say(`✗ ${escapeHtml(outcome.reason)}`);
+      await say(`✗ ${escapeHtml(outcome.reason)}`, cmd);
       return;
     }
 
-    router.callManual(outcome.call, cmd.text, cmd.recvAt);
-    if (!config.live) await say('🔇 LIVE=false — nothing was published.');
+    const ticker = outcome.call.ticker ? `$${escapeHtml(outcome.call.ticker)}` : 'that coin';
+    const decision = router.callManual(outcome.call, cmd.text, cmd.recvAt);
+
+    // Every branch answers. The command deleted itself on the way in, so an unreported
+    // decision leaves an admin unable to tell a screened coin from a bot that has died.
+    switch (decision.kind) {
+      case 'publishing':
+        if (!config.live) await say(`🔇 LIVE=false — ${ticker} was not published.`, cmd);
+        break;
+      case 'review':
+        await say(
+          `⚠️ ${ticker} was held back: ${escapeHtml(decision.reason)}.` +
+            (warRoomPeer ? ' Tap 🚀 on the card below to publish it anyway.' : ''),
+          cmd,
+        );
+        break;
+      case 'duplicate':
+        await say(`↩︎ ${ticker} was already called (${escapeHtml(decision.sources.join(', '))}).`, cmd);
+        break;
+      case 'dropped':
+        await say(`✗ ${ticker}: ${escapeHtml(decision.reason)}`, cmd);
+        break;
+    }
   };
 
-  attachIngest(client, watched, warRoomId, {
+  attachIngest(client, watched, { warRoomId, channelId }, {
     onMessage: (msg) => {
       catchup.note(msg.chatId, msg.messageId);
       router.handleMessage(msg);

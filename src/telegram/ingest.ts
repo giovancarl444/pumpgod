@@ -21,11 +21,26 @@ export interface IncomingReaction {
   recvAt: number;
 }
 
-/** Something typed in the war room. Commands are how we call a coin of our own. */
+/** Something typed in a control chat. Commands are how we call a coin of our own. */
 export interface IncomingCommand {
   text: string;
+  chatId: string;
   messageId: number;
+  /** Who typed it. Absent on a broadcast-channel post, which is signed by the channel. */
+  fromId?: string;
+  /** True for a broadcast-channel post, where the ability to post is itself proof of rights. */
+  post: boolean;
+  /** The public channel, where anyone in a supergroup could type — unlike the war room. */
+  fromChannel: boolean;
   recvAt: number;
+}
+
+/** Chats we accept commands from. Reactions only ever count in the war room. */
+export interface ControlChats {
+  /** Private staging chat. Trusted: everything typed here is treated as a command. */
+  warRoomId?: string;
+  /** The public channel. Commands here must be shown to come from an admin. */
+  channelId?: string;
 }
 
 export interface IngestHandlers {
@@ -53,9 +68,11 @@ function peerKey(peer: Api.TypePeer): string | undefined {
 export function attachIngest(
   client: TelegramClient,
   watched: Map<string, Source>,
-  warRoomId: string | undefined,
+  control: ControlChats,
   handlers: IngestHandlers,
 ): (update: Api.TypeUpdate) => void {
+  const { warRoomId, channelId } = control;
+
   const onUpdate = (update: Api.TypeUpdate) => {
     const recvAt = performance.now();
 
@@ -73,11 +90,23 @@ export function attachIngest(
       const chatId = peerKey(message.peerId);
       if (!chatId) return;
 
-      // The war room is where we talk to ourselves. Telegram delivers our own outgoing
-      // messages to every other session of the account, so typing a command on a phone
-      // reaches the running bot.
-      if (chatId === warRoomId && isNew) {
-        handlers.onCommand({ text, messageId: message.id, recvAt });
+      // Telegram delivers our own outgoing messages to every other session of the account,
+      // so typing a command on a phone reaches the running bot. That is what makes both of
+      // these work at all.
+      //
+      // Our own published cards come back through here too. They never begin with the
+      // command word, so `parseCommand` drops them — but note that this is the only thing
+      // standing between the channel and a feedback loop.
+      if (isNew && (chatId === warRoomId || chatId === channelId)) {
+        handlers.onCommand({
+          text,
+          chatId,
+          messageId: message.id,
+          fromId: message.fromId ? peerKey(message.fromId) : undefined,
+          post: Boolean(message.post),
+          fromChannel: chatId === channelId,
+          recvAt,
+        });
         return;
       }
 

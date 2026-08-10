@@ -2,13 +2,14 @@ import { loadPresentation } from '../src/config';
 import { resolveManualCall, MANUAL_SOURCE } from '../src/pipeline/manual';
 import { assess } from '../src/pipeline/risk';
 import { renderPublicCall } from '../src/format/call';
+import { CAPTION_LIMIT } from '../src/telegram/photo';
 import type { Signal } from '../src/types';
 
 /**
  * Shows exactly what pumpgod would post for an address, without posting it and without
  * needing a Telegram account. Publishing deliberately lives in the running bot instead —
  * one process owns the dedupe window and the outcome tracker, and a second writer would
- * corrupt both. To actually call a coin, type `call <address>` in the war room.
+ * corrupt both. To actually call a coin, type `/signal <address>` in the channel.
  */
 async function main() {
   const input = process.argv.slice(2).join(' ').trim();
@@ -19,7 +20,9 @@ async function main() {
 
   const config = loadPresentation();
   const started = Date.now();
-  const outcome = await resolveManualCall(input, Math.max(config.enrichTimeoutMs, 5000));
+  // Same chain restriction the running bot applies, so a preview that passes here is not a
+  // call the channel would refuse.
+  const outcome = await resolveManualCall(input, Math.max(config.enrichTimeoutMs, 5000), config.chains);
 
   if (!outcome.ok) {
     console.error(`\n  ✗ ${outcome.reason}\n`);
@@ -42,8 +45,10 @@ async function main() {
     timings: { messageUnix: Math.floor(Date.now() / 1000), recvAt: 0, wallClockMs: Date.now() },
   };
 
+  const html = renderPublicCall(signal, config);
   console.log(`\n  resolved in ${Date.now() - started}ms\n`);
-  console.log(frame(renderPublicCall(signal, config)));
+  console.log(frame(html));
+  console.log(photoNote(outcome.call.imageUrl, html, config.showImage));
 
   if (risk.level === 'danger') {
     console.log('\n  🚨 the screen would HOLD THIS BACK — it goes to the war room, not the channel:');
@@ -62,7 +67,22 @@ async function main() {
   if (!config.referralUrl) {
     console.log('  note: REFERRAL_URL is empty, so this call earns nothing. Set it in .env.');
   }
-  console.log(`\n  to publish it: type "call ${outcome.call.token.address}" in the war room\n`);
+  console.log(`\n  to publish it: type "/signal ${outcome.call.token.address}" in the channel\n`);
+}
+
+/**
+ * The image is the one part of the card this preview cannot draw, so it says in words what
+ * would be attached. Worth stating rather than leaving to the run: a coin with no indexed
+ * artwork posts as plain text, and finding that out live is finding it out too late.
+ */
+function photoNote(imageUrl: string | undefined, html: string, showImage: boolean): string {
+  const text = html.replace(/<[^>]+>/g, '');
+  if (!showImage) return '\n  photo: off (SHOW_IMAGE=false) — posts as text';
+  if (!imageUrl) return '\n  photo: none — DexScreener has no artwork for this coin, so it posts as text';
+  if (text.length > CAPTION_LIMIT) {
+    return `\n  photo: dropped — the card is ${text.length} chars and a caption holds ${CAPTION_LIMIT}`;
+  }
+  return `\n  photo: ${imageUrl}`;
 }
 
 /** Renders the Telegram HTML as a terminal card, keeping link targets visible — those are

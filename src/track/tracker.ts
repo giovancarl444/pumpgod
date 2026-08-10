@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ROOT } from '../config';
-import type { Chain, Signal } from '../types';
+import type { Chain, RiskLevel, Signal } from '../types';
 import { log } from '../log';
 
 const STORE = resolve(ROOT, 'data/tracked.json');
@@ -15,9 +15,9 @@ const RETIRE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** Below this, the pool is gone in any practical sense. */
 const RUG_LIQUIDITY_USD = 500;
 
-export type Outcome = 'called' | 'staged' | 'shadow' | 'dry-run';
+export type Outcome = 'called' | 'staged' | 'shadow' | 'dry-run' | 'duplicate';
 
-const RANK: Record<Outcome, number> = { shadow: 0, 'dry-run': 1, staged: 2, called: 3 };
+const RANK: Record<Outcome, number> = { duplicate: 0, shadow: 1, 'dry-run': 2, staged: 3, called: 4 };
 
 export interface TrackedCall {
   id: string;
@@ -28,6 +28,13 @@ export interface TrackedCall {
   ticker?: string;
   name?: string;
   calledAt: number;
+  /** What the screen said when this arrived, not what it would say now. */
+  risk?: RiskLevel;
+  riskFlags?: string[];
+  /** We looked at this and said no. Strictly narrower than `staged`, which only means it
+   *  reached the war room — and usually nobody was there. See `decline`. */
+  declined?: boolean;
+  declinedReason?: string;
   entryPriceUsd?: number;
   entryMcUsd?: number;
   athPriceUsd?: number;
@@ -51,8 +58,18 @@ interface DexPair {
   liquidity?: { usd?: number };
 }
 
-function key(chain: Chain, address: string): string {
+/** Identity of the coin itself. EVM addresses are case-insensitive; Solana's are not. */
+function coinKey(chain: Chain, address: string): string {
   return chain === 'solana' ? `${chain}:${address}` : `${chain}:${address.toLowerCase()}`;
+}
+
+/**
+ * One record per source per coin, not one per coin. Three groups calling the same token is
+ * the normal case, and the entry each of them actually gave is the only thing that can
+ * separate a group that picks well from one we simply happened to read first.
+ */
+function key(sourceId: string, chain: Chain, address: string): string {
+  return `${sourceId}:${coinKey(chain, address)}`;
 }
 
 export interface Quote {
@@ -116,7 +133,7 @@ export class Tracker {
     if (!existsSync(STORE)) return;
     try {
       const raw = JSON.parse(readFileSync(STORE, 'utf8')) as TrackedCall[];
-      for (const c of raw) this.calls.set(key(c.chain, c.address), c);
+      for (const c of raw) this.calls.set(key(c.sourceId, c.chain, c.address), c);
       log.debug(`loaded ${this.calls.size} tracked calls`);
     } catch (err) {
       log.warn(`could not read tracked calls: ${(err as Error).message}`);
@@ -124,8 +141,8 @@ export class Tracker {
   }
 
   /** Called from the router. Cheap and synchronous — the first price fetch is deferred. */
-  track(signal: Signal, outcome: Outcome): void {
-    const k = key(signal.call.token.chain, signal.call.token.address);
+  track(signal: Signal, outcome: Outcome): TrackedCall {
+    const k = key(signal.source.id, signal.call.token.chain, signal.call.token.address);
 
     // A call typically arrives as `staged` and is promoted to `called` on approval. Keep
     // the original entry price — that is where we would actually have bought — but record
@@ -136,10 +153,17 @@ export class Tracker {
         existing.outcome = outcome;
         this.dirty = true;
       }
-      return;
+      // Publishing it overrules the decline — a call held back and then approved must not
+      // resurface in the feed as one we passed on.
+      if (outcome === 'called' && existing.declined) {
+        existing.declined = false;
+        delete existing.declinedReason;
+        this.dirty = true;
+      }
+      return existing;
     }
 
-    this.calls.set(k, {
+    const created: TrackedCall = {
       id: signal.id,
       sourceId: signal.source.id,
       outcome,
@@ -148,9 +172,26 @@ export class Tracker {
       ticker: signal.call.ticker,
       name: signal.call.name,
       calledAt: Date.now(),
+      risk: signal.risk.level,
+      riskFlags: signal.risk.flags.map((f) => f.code),
       entryMcUsd: signal.call.stats.marketCapUsd,
       entryPriceUsd: signal.call.stats.priceUsd,
-    });
+    };
+    this.calls.set(k, created);
+    this.dirty = true;
+    return created;
+  }
+
+  /**
+   * A call somebody decided against. Narrower than `staged` on purpose: reaching the war
+   * room usually means nobody looked, and "we passed on this" is a claim the X feed makes
+   * out loud. The reason is frozen at the moment of the decision, because reconstructing it
+   * later from the price is how you end up claiming foresight you did not have.
+   */
+  decline(signal: Signal, reason?: string): void {
+    const call = this.track(signal, 'staged');
+    call.declined = true;
+    if (reason) call.declinedReason ??= reason;
     this.dirty = true;
   }
 
@@ -183,11 +224,23 @@ export class Tracker {
     const active = this.active();
     if (!active.length) return;
 
-    for (let i = 0; i < active.length; i += BATCH) {
-      const batch = active.slice(i, i + BATCH);
+    // One request slot per coin, not per record. Every source that called a token holds its
+    // own record, so a coin four groups shouted about would otherwise eat four of the thirty
+    // addresses this request can carry — for four copies of the same price.
+    const byCoin = new Map<string, TrackedCall[]>();
+    for (const call of active) {
+      const k = coinKey(call.chain, call.address);
+      const group = byCoin.get(k);
+      if (group) group.push(call);
+      else byCoin.set(k, [call]);
+    }
+    const coins = [...byCoin.values()];
+
+    for (let i = 0; i < coins.length; i += BATCH) {
+      const batch = coins.slice(i, i + BATCH);
       try {
         const res = await fetch(
-          `https://api.dexscreener.com/latest/dex/tokens/${batch.map((c) => c.address).join(',')}`,
+          `https://api.dexscreener.com/latest/dex/tokens/${batch.map((group) => group[0]!.address).join(',')}`,
           { headers: { accept: 'application/json' } },
         );
         if (!res.ok) continue;
@@ -202,9 +255,9 @@ export class Tracker {
           if (!current || (pair.liquidity?.usd ?? 0) > (current.liquidity?.usd ?? 0)) best.set(k, pair);
         }
 
-        for (const call of batch) {
-          const pair = best.get(call.address.toLowerCase());
-          if (pair) this.apply(call, pair);
+        for (const group of batch) {
+          const pair = best.get(group[0]!.address.toLowerCase());
+          if (pair) for (const call of group) this.apply(call, pair);
         }
       } catch (err) {
         log.debug(`tracker poll failed: ${(err as Error).message}`);

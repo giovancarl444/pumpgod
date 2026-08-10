@@ -1,7 +1,8 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config as loadEnv } from 'dotenv';
-import type { Source, SourceMode } from './types';
+import { chainFromSlug } from './parse/chains';
+import type { Chain, Source, SourceMode } from './types';
 
 loadEnv();
 
@@ -26,6 +27,25 @@ function num(key: string, fallback: number): number {
 }
 
 /**
+ * A typo here would silently widen what we are willing to call, which is the opposite of
+ * what someone setting this is trying to do — so an unrecognised chain is an error, not a
+ * skipped entry. `CHAINS=all` is the explicit way to say "no restriction".
+ */
+function chainList(key: string, fallback: Chain[]): Chain[] {
+  const raw = process.env[key]?.trim();
+  if (!raw) return fallback;
+  if (raw.toLowerCase() === 'all') return [];
+
+  return raw.split(',').map((part) => {
+    const chain = chainFromSlug(part);
+    if (!chain || chain === 'unknown') {
+      throw new Error(`${key} lists an unknown chain "${part.trim()}". Use chain names like solana,base — or "all".`);
+    }
+    return chain;
+  });
+}
+
+/**
  * Telegram clients show channel ids as -100xxxxxxxxxx but the wire protocol uses the
  * bare id. Everything internal keys off the bare form so both spellings work in config.
  */
@@ -44,6 +64,10 @@ export interface PresentationConfig {
   enrichEnabled: boolean;
   enrichTimeoutMs: number;
   maxCallAgeSec: number;
+  /** Chains we are willing to call at all. Empty means every chain. */
+  chains: Chain[];
+  /** Attach the coin's artwork to the public post. */
+  showImage: boolean;
   /** Buy-button templates, `{address}` substituted. Blank falls back to a DexScreener search. */
   tradeUrlSol: string;
   tradeUrlEvm: string;
@@ -72,6 +96,8 @@ export function loadPresentation(): PresentationConfig {
     enrichEnabled: bool('ENRICH_ENABLED', true),
     enrichTimeoutMs: num('ENRICH_TIMEOUT_MS', 2500),
     maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
+    chains: chainList('CHAINS', ['solana']),
+    showImage: bool('SHOW_IMAGE', true),
     tradeUrlSol: process.env.TRADE_URL_SOL?.trim() || 'https://axiom.trade/t/{address}',
     tradeUrlEvm: process.env.TRADE_URL_EVM?.trim() ?? '',
     referralUrl: process.env.REFERRAL_URL?.trim() || undefined,

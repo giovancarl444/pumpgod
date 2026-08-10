@@ -135,15 +135,23 @@ hit rate looks right.
 
 ## Calling a coin yourself
 
-Relaying is only half of it. To call something you found, type this in the war room:
+Relaying is only half of it. To call something you found, type this **in the channel**:
 
 ```
-call DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
+/signal DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
 ```
 
 An address, a DexScreener link, a pump.fun link — anything the parser already understands.
 Telegram delivers your own messages to every session of the account, so this works from
-your phone against the bot running on a server.
+your phone against the bot running on a server. It works in the war room too, and `call` is
+still accepted as an alias.
+
+The command is **admin-only**, and the check costs nothing in the usual case: Telegram only
+lets admins post in a broadcast channel, so the message existing is already the proof. In a
+supergroup, where anyone can type, membership is read back once and cached.
+
+The typed command is deleted before the lookup starts, so the channel never sits there
+showing the instruction while it waits — the card is what appears, not the plumbing.
 
 The command word is required. The war room is also where you *discuss* coins, and a chat
 that publishes whatever gets pasted into it has no undo.
@@ -155,15 +163,26 @@ its own carries no numbers — the tradability screen would have nothing to read
 pass everything, which is exactly the guarantee worth keeping. If DexScreener has no pool
 for it, there is nothing to buy, and pumpgod says so instead of posting a naked address.
 
+Because the numbers are already in hand, a manual call is posted **as the coin's own artwork
+with the card as its caption**. The image is downloaded here rather than handed to Telegram
+as a URL: the URL form fails opaquely server-side, so a rate-limited CDN would be
+indistinguishable from a coin with no logo. If it cannot be had — no artwork indexed, a slow
+CDN, an aspect ratio Telegram refuses — the call still goes out as text. A call posted
+without a picture is a call; a call not posted because a CDN was slow is a miss.
+
+Whatever happens, you get told. Every outcome answers back in the war room — published,
+held back by the screen and why, already called, or refused for its chain. Silence would be
+indistinguishable from a dead bot, and the command has already deleted itself by then.
+
 To see what a call will look like without posting it — and without a Telegram account:
 
 ```bash
 npm run call -- <address or link>
 ```
 
-That prints the exact public message, every link target, and the screen's verdict. It never
-posts: one process owns the dedupe window and the outcome tracker, and a second writer would
-corrupt both.
+That prints the exact public message, every link target, the artwork it would attach, and
+the screen's verdict. It never posts: one process owns the dedupe window and the outcome
+tracker, and a second writer would corrupt both.
 
 Your own calls are tracked as source `manual`, so `npm run scorecard` answers the question
 that starts to matter once you are picking coins yourself — are you beating the groups you
@@ -185,8 +204,15 @@ and a bot could not read the source groups in the first place.
 
 ## Filtering
 
-Per source you can set `minMarketCapUsd` / `maxMarketCapUsd` (skip what is already too big to
-move), `chains` (only the chains you can actually trade), and `mute`.
+`CHAINS` in `.env` is the outermost gate and applies to every path — relayed, typed, or
+detected. It ships as `solana`, because that is where the volume is and the one chain whose
+whole path (price, liquidity screen, Buy link) is proven end to end. A call on anything else
+is dropped before any source's own rules are consulted; a `/signal` on one is refused with
+the reason rather than ignored, and an EVM address is turned away from its shape alone
+without spending a round trip on it. Set `CHAINS=all` to lift the restriction.
+
+Per source you can then set `minMarketCapUsd` / `maxMarketCapUsd` (skip what is already too
+big to move), `chains` (narrower still), and `mute`.
 
 Dedupe is global: the same contract from a second group inside `DEDUPE_TTL_SEC` does not
 double-post, it is recorded as a confirmation and shown as `2× confirmed`.
