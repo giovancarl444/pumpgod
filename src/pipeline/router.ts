@@ -131,7 +131,16 @@ export class Router {
       return { kind: 'dropped', reason: `filtered out by source "${source.id}"` };
     }
 
-    const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, source.id);
+    // A group we only watch registers here but must not claim the coin: it has nowhere to
+    // send a call, so if it took the slot our own call would be dropped as a duplicate of a
+    // post that was never made. That failure scales with the number of rivals we track, and
+    // tracking all of them is the plan.
+    const { first, entry } = this.dedupe.check(
+      call.token.chain,
+      call.token.address,
+      source.id,
+      source.mode !== 'shadow',
+    );
 
     // Seconds since this originated: when a group posted it, or when the pool was created.
     // Coarse either way, but it only needs to separate "just now" from "we were late".

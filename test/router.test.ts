@@ -203,6 +203,51 @@ describe('Router', () => {
     expect(sent).toHaveLength(1);
   });
 
+  /**
+   * The dedupe slot means "somebody who can post this has taken it", not "somebody mentioned
+   * it". Every rival group goes into shadow mode on day one, so the weaker reading would make
+   * each group we add another way to lose our own calls — against a product whose whole claim
+   * is being first.
+   */
+  describe('a group we only watch', () => {
+    const rival = () => source('shadow', { id: 'rival', label: 'Rival Group' });
+
+    it('cannot stop us calling the same coin seconds later', async () => {
+      const { router, sent } = harness();
+      router.handleMessage(incoming(rival()));
+      await settle();
+      expect(sent).toHaveLength(0);
+
+      router.handleMessage(incoming(source('auto', { id: 'ours' }), CALL_TEXT, 2));
+      await settle();
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.peer).toBe(CHANNEL);
+    });
+
+    // Why it registers rather than skipping the gate outright: two groups holding the same
+    // coin is real signal, and the count is the one number no other group can print.
+    it('still counts as a confirmation on the call we publish', async () => {
+      const { router, sent } = harness();
+      router.handleMessage(incoming(rival()));
+      router.handleMessage(incoming(source('auto', { id: 'ours' }), CALL_TEXT, 2));
+      await settle();
+
+      expect(sent[0]!.text).toContain('2× confirmed');
+    });
+
+    it('does not leave the coin open for a second group to post again', async () => {
+      const { router, sent } = harness();
+      router.handleMessage(incoming(rival()));
+      router.handleMessage(incoming(source('auto', { id: 'ours' }), CALL_TEXT, 2));
+      await settle();
+      router.handleMessage(incoming(source('auto', { id: 'other' }), CALL_TEXT, 3));
+      await settle();
+
+      expect(sent).toHaveLength(1);
+    });
+  });
+
   it('respects the market cap window', async () => {
     const { router, sent } = harness();
     // The call reports $36.27K, below this floor.
