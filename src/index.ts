@@ -1,4 +1,5 @@
-import { loadConfig, loadSocial, loadSources, normalisePeerId } from './config';
+import { existsSync } from 'node:fs';
+import { loadConfig, loadSocial, loadSources, normalisePeerId, SOURCES_PATH } from './config';
 import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { attachIngest, type IncomingCommand } from './telegram/ingest';
@@ -20,8 +21,16 @@ async function main() {
     throw new Error('TG_SESSION is empty. Run `npm run login` to create one, then paste it into .env.');
   }
 
-  const sources = loadSources().filter((s) => s.enabled);
-  if (!sources.length) throw new Error('No enabled sources in config/sources.json.');
+  // Relaying and calling coins ourselves are independent halves, so a missing sources file is
+  // a shape this can legitimately run in rather than an error: `/signal` needs a channel, not
+  // a list of groups to follow. A file that exists and is malformed still throws — that is a
+  // mistake, not a choice.
+  const sources = (existsSync(SOURCES_PATH) ? loadSources() : []).filter((s) => s.enabled);
+  if (!sources.length && !config.channel) {
+    throw new Error(
+      'Nothing to do: no enabled sources in config/sources.json, and no PUMPGOD_CHANNEL to publish /signal calls into.',
+    );
+  }
 
   const client = createClient(config);
   await client.connect();
@@ -60,7 +69,13 @@ async function main() {
     }
   }
 
-  if (!watched.size) throw new Error('No sources could be resolved. Is this account a member of those groups?');
+  // Every source failing when some were configured is a different situation from configuring
+  // none: something is wrong rather than absent, and it should not be discovered by noticing
+  // that nothing was ever relayed.
+  if (!watched.size && sources.length) {
+    throw new Error('No sources could be resolved. Is this account a member of those groups?');
+  }
+  if (!watched.size) log.warn('watching no groups — /signal still works, relaying does not');
 
   const tracker = new Tracker();
   tracker.load();

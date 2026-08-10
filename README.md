@@ -77,17 +77,24 @@ cp .env.example .env
 ```
 
 1. **Get API credentials** at <https://my.telegram.org> → *API development tools*. Put
-   `TG_API_ID` and `TG_API_HASH` in `.env`.
+   `TG_API_ID` and `TG_API_HASH` in `.env`. These are for a **user account**, not a bot —
+   a bot cannot read other people's groups, which is the entire first half of this.
 2. **Log in**: `npm run login`. Paste the resulting `TG_SESSION` into `.env`.
    This string is a full credential for the account — treat it like a password. It is
    gitignored; keep it that way.
-3. **Join the groups** you want to track, from that account.
-4. **List what you can see**: `npm run dialogs`. Copy the ids you want.
-5. **Configure sources**: `cp config/sources.example.json config/sources.json` and edit.
-6. **Set destinations** in `.env`: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private
-   staging group).
-7. **Check it**: `npm run doctor`. Fix every ✗ before going any further.
-8. **Run**: `npm run dev`.
+3. **Set destinations** in `.env`: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private
+   staging group). Run `npm run dialogs` to list the ids this account can see.
+4. **Check it**: `npm run doctor`. Fix every ✗ before going any further.
+5. **Run**: `npm run dev`, then type `/signal <address>` in your channel.
+
+That is a complete setup — you are calling your own coins. Relaying other groups is a
+separate half, and it needs two more steps:
+
+6. **Join the groups** you want to track, from that account, and `npm run dialogs` for ids.
+7. **Configure sources**: `cp config/sources.example.json config/sources.json` and edit.
+
+With no `config/sources.json` the bot says so once and runs anyway. Watching nobody is a
+shape this is meant to run in, not a misconfiguration.
 
 `doctor` exists because the interesting ways to get that wrong all fail **silently**. A group
 this account has been kicked from still resolves straight out of the entity cache, so no
