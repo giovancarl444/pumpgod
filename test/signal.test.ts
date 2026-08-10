@@ -92,6 +92,7 @@ function config(over: Partial<AppConfig> = {}): AppConfig {
     apiId: 1,
     apiHash: 'x',
     session: 'x',
+    botToken: '',
     channel: 'chan',
     warRoom: 'war',
     live: true,

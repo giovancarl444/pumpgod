@@ -52,6 +52,7 @@ function harness(overrides: Partial<AppConfig> = {}, tracker?: Tracker) {
     apiId: 1,
     apiHash: 'x',
     session: 'x',
+    botToken: '',
     channel: 'chan',
     warRoom: 'war',
     live: true,

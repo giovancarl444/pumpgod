@@ -80,6 +80,8 @@ export interface AppConfig extends PresentationConfig {
   apiId: number;
   apiHash: string;
   session: string;
+  /** From BotFather. Publishes without a phone number, and can never read a group it is not in. */
+  botToken: string;
   channel: string;
   warRoom?: string;
   dedupeTtlMs: number;
@@ -124,12 +126,20 @@ export function loadSocial(): SocialConfig {
   };
 }
 
+/**
+ * A bot token and a user session are alternatives, not a pair: the bot publishes, and only a
+ * user account can read a rival group. Requiring the my.telegram.org credentials up front would
+ * make the cheap half of the setup wait on the expensive one.
+ */
 export function loadConfig(): AppConfig {
+  const botToken = process.env.TG_BOT_TOKEN?.trim() ?? '';
+
   return {
     ...loadPresentation(),
-    apiId: Number(required('TG_API_ID')),
-    apiHash: required('TG_API_HASH'),
+    apiId: botToken ? Number(process.env.TG_API_ID ?? 0) : Number(required('TG_API_ID')),
+    apiHash: botToken ? (process.env.TG_API_HASH?.trim() ?? '') : required('TG_API_HASH'),
     session: process.env.TG_SESSION?.trim() ?? '',
+    botToken,
     channel: process.env.PUMPGOD_CHANNEL?.trim() ?? '',
     warRoom: process.env.WAR_ROOM_CHAT?.trim() || undefined,
     dedupeTtlMs: num('DEDUPE_TTL_SEC', 21_600) * 1000,
