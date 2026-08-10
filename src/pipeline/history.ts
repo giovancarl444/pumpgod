@@ -29,6 +29,7 @@ export const NETWORK: Partial<Record<Chain, string>> = {
   tron: 'tron',
   ton: 'ton',
   hyperliquid: 'hyperliquid',
+  robinhood: 'robinhood',
 };
 
 /** 5-minute candles for 24h is 288, comfortably inside the 1000-candle ceiling. */

@@ -182,9 +182,27 @@ function plausible(pair: DexPair, marketCapUsd: number | undefined): boolean {
 
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {
   const q = tokenAddress.toLowerCase();
-  const own = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);
-  const best = mainPool(own);
+  const matching = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);
+  const best = mainPool(matching);
   if (!best) return undefined;
+
+  /**
+   * One address, one chain.
+   *
+   * An EVM address is a hash of the deployer and a nonce, so the same string is routinely a
+   * *different token* on another chain — and DexScreener answers the token endpoint by address
+   * across all of them. Matching on the address alone therefore sums the liquidity of several
+   * unrelated coins into one card and reads the chain off whichever of them traded most.
+   *
+   * Seen live: one scraped address came back as three coins at once, on base, robinhood and
+   * ethereum. Small numbers in that instance, but the direction is the dangerous one — the sum
+   * only ever runs high, and the risk screen reads it to decide whether a pool can be exited.
+   *
+   * The busiest pool decides which chain is meant, which is the same judgement `mainPool`
+   * already makes and for the same reason: the coin somebody is asking about is the one with
+   * a market, not the one that happens to share its address.
+   */
+  const own = matching.filter((p) => p.chainId === best.chainId);
 
   const real = own.filter((p) => plausible(p, best.marketCap ?? best.fdv));
   const liquidityUsd = sum(real.map((p) => p.liquidity?.usd));

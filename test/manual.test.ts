@@ -335,6 +335,35 @@ describe('resolveManualCall', () => {
     expect(out.call.stats.liquidityUsd).toBe(35_449);
   });
 
+  /**
+   * An EVM address is a hash of a deployer and a nonce, so the identical string is routinely a
+   * different coin on another chain — and DexScreener answers the token endpoint by address
+   * across all of them. One address scraped from a live channel came back as three coins.
+   */
+  it('does not add up three different coins that share an address', async () => {
+    const EVM = '0x3c0cef747884e23f8d76aa46ff6bf7f21cdb9fcc';
+    dex([
+      [
+        `/tokens/${EVM}`,
+        [
+          pair({ chainId: 'base', pairAddress: POOL, liquidity: { usd: 80_000 }, volume: { h24: 120_000 }, marketCap: 500_000, baseToken: { address: EVM, name: 'Real', symbol: 'REAL' } }),
+          pair({ chainId: 'robinhood', pairAddress: 'clone-a', liquidity: { usd: 122 }, volume: { h24: 2 }, marketCap: 900, baseToken: { address: EVM, name: 'Clone', symbol: 'CLONE' } }),
+          pair({ chainId: 'ethereum', pairAddress: 'clone-b', liquidity: { usd: 53 }, volume: { h24: 0 }, marketCap: 400, baseToken: { address: EVM, name: 'Clone', symbol: 'CLONE' } }),
+        ],
+      ],
+    ]);
+
+    const out = await resolveManualCall(EVM, 2000);
+    if (!out.ok) throw new Error(out.reason);
+
+    // The busiest pool decides which chain was meant — the same judgement `mainPool` makes.
+    expect(out.call.token.chain).toBe('base');
+    // And the other two coins are not folded into the depth the risk screen reads. Summed,
+    // this reports $80,175 of liquidity for a coin that has $80,000.
+    expect(out.call.stats.liquidityUsd).toBe(80_000);
+    expect(out.call.stats.volumeUsd).toBe(120_000);
+  });
+
   it('falls back to depth when nothing has traded anywhere yet', async () => {
     // A coin minutes old has no volume in any pool, and depth is the only evidence there is.
     dex([

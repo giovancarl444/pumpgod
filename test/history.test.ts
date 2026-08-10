@@ -112,7 +112,9 @@ describe('reading a peak off the chart', () => {
   // from a real answer — so an unmapped chain must not reach the network at all.
   it('does not guess a network it has no slug for', async () => {
     const seen = serve(candles([[T0, 1]]));
-    expect(await peakSince('robinhood', POOL, T0)).toBeUndefined();
+    // `unknown` is the only chain left with no slug, and it is unmappable by construction:
+    // it names the case where we could not tell what chain a call was on.
+    expect(await peakSince('unknown', POOL, T0)).toBeUndefined();
     expect(seen).toHaveLength(0);
   });
 
@@ -150,10 +152,15 @@ describe('reading a peak off the chart', () => {
       tron: true,
       ton: true,
       hyperliquid: true,
-      // Not a chain GeckoTerminal indexes, and `unknown` is the absence of an answer rather
-      // than a place. Both fall back to the live price, which is the honest thing to do when
-      // there is no chart to read — it is the *undeclared* fallbacks above that were the bug.
-      robinhood: false,
+      // Robinhood was assumed unpriceable when this list was first written, and it is not:
+      // GeckoTerminal indexes it and returns candles for its pools. That guess alone was 17 of
+      // 70 rows on a live pass — the rival channels are calling Robinhood-chain clones of
+      // famous names far more often than anyone would predict, which is exactly the sort of
+      // thing an assumption gets wrong and a measurement does not.
+      robinhood: true,
+      // The absence of an answer rather than a place, so there is nothing to look up. This one
+      // falls back to the live price, which is honest when there is no chart to read — it is
+      // the *undeclared* fallbacks that were the bug.
       unknown: false,
     };
 
