@@ -1,5 +1,5 @@
 import type { Signal } from '../types';
-import { chainLabel, dexScreenerUrl, explorerUrl, tradeUrl } from '../parse/chains';
+import { chainLabel, dexScreenerUrl, explorerUrl, hasTradeUrl, tradeUrl } from '../parse/chains';
 
 export interface RenderOptions {
   footer: string;
@@ -66,6 +66,37 @@ function riskLine(signal: Signal, verbose: boolean): string | undefined {
   return `${icon} <b>${escapeHtml(flags[0]!.detail)}</b>`;
 }
 
+function signalTitle(signal: Signal): string {
+  const { name, ticker } = signal.call;
+  const label = name && ticker ? `${name} | ${ticker}` : ticker || name || 'New call';
+  return `<b>${escapeHtml(label)}</b>`;
+}
+
+/**
+ * One fact per line, each behind its own icon. This is the shape the call groups people
+ * already follow use, and it survives because a reader scanning a phone finds the number
+ * they care about by its icon — a run-on stat line makes them read all of it or none.
+ */
+function statBlock(signal: Signal): string[] {
+  const { stats, token } = signal.call;
+  const lines: string[] = [];
+
+  const mc = money(stats.marketCapUsd);
+  if (mc) lines.push(`📊 Market Cap: ${mc}`);
+  lines.push(`🌐 ${chainLabel(token.chain)}`);
+
+  const liq = money(stats.liquidityUsd);
+  if (liq) lines.push(`💧 Liquidity: ${liq}`);
+  const vol = money(stats.volumeUsd);
+  if (vol) lines.push(`📈 Volume: ${vol}`);
+  if (stats.ageText) lines.push(`⏰ Token Age: ${escapeHtml(stats.ageText)}`);
+
+  // The one number no other group can show, so it earns its line when it exists.
+  if (signal.confirmations.length > 1) lines.push(`✅ ${signal.confirmations.length}× confirmed`);
+
+  return lines;
+}
+
 /**
  * Inline anchors rather than an inline keyboard: reply markup is bot-only, and pumpgod
  * posts from a user account so it can also read the groups it tracks.
@@ -80,24 +111,35 @@ function linkLine(signal: Signal, opts: RenderOptions): string {
   return links.join(' · ');
 }
 
+/**
+ * A signal, not an analysis. Anything that needs a second read — holder counts, parse
+ * confidence, timings — belongs in the war room, where somebody is deciding rather than
+ * scrolling. `CA:` gets its own line so the address below it is a clean tap-to-copy target.
+ */
 export function renderPublicCall(signal: Signal, opts: RenderOptions): string {
+  const { token, pairAddress } = signal.call;
   const lines = [
-    '⚡ <b>PUMPGOD CALL</b>',
+    '<b>PUMPGOD</b> ⚡',
+    signalTitle(signal),
     '',
-    heading(signal),
-    `<code>${escapeHtml(signal.call.token.address)}</code>`,
+    'CA:',
+    `<code>${escapeHtml(token.address)}</code>`,
+    '',
+    ...statBlock(signal),
   ];
 
-  const stats = statLine(signal);
-  if (stats) lines.push('', stats);
-  lines.push(contextLine(signal));
-
+  // Above the links, so a danger flag cannot be scrolled past on the way to Buy.
   const risk = riskLine(signal, false);
-  if (risk) lines.push('', risk);
+  if (risk) lines.push('', risk, '');
 
-  lines.push('', linkLine(signal, opts));
+  const templates = { sol: opts.tradeUrlSol, evm: opts.tradeUrlEvm };
+  const links = [`<a href="${dexScreenerUrl(token.chain, pairAddress, token.address)}">DexScreener</a>`];
+  if (hasTradeUrl(token.chain, templates)) {
+    links.push(`<a href="${tradeUrl(token.chain, token.address, templates)}">Buy</a>`);
+  }
+  lines.push(links.join(' · '));
 
-  if (opts.showSource) lines.push(`<i>via ${escapeHtml(signal.source.label)}</i>`);
+  if (opts.showSource) lines.push('', `<i>via ${escapeHtml(signal.source.label)}</i>`);
 
   // These terminals attribute referrals at signup, not per trade, so the money is made by
   // the link that gets read every call — not by decorating each Buy button.

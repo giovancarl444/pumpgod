@@ -83,6 +83,12 @@ export function dexScreenerUrl(chain: Chain, pairAddress: string | undefined, to
  * hardcoded because the right terminal differs by chain and by who is running the channel —
  * and because a referral-bearing link belongs in `.env`, not committed to a public repo.
  */
+/** Whether a real terminal is configured for this chain, so a card can leave the Buy link
+ *  out rather than show a DexScreener search wearing a Buy label. */
+export function hasTradeUrl(chain: Chain, templates: { sol: string; evm: string }): boolean {
+  return Boolean(chain === 'solana' ? templates.sol : templates.evm);
+}
+
 export function tradeUrl(chain: Chain, address: string, templates: { sol: string; evm: string }): string {
   const template = chain === 'solana' ? templates.sol : templates.evm;
   if (!template) return `https://dexscreener.com/search?q=${address}`;

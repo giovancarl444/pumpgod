@@ -113,7 +113,7 @@ describe('Router', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]!.peer).toBe(CHANNEL);
-    expect(sent[0]!.text).toContain('PUMPGOD CALL');
+    expect(sent[0]!.text).toContain('PUMPGOD');
     expect(sent[0]!.text).toContain('0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90');
   });
 
@@ -248,7 +248,7 @@ describe('Router', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]!.peer).toBe(CHANNEL);
-    expect(sent[0]!.text).toContain('PUMPGOD CALL');
+    expect(sent[0]!.text).toContain('PUMPGOD');
     expect(sent[0]!.text).toContain('WIF');
   });
 

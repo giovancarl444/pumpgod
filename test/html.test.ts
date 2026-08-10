@@ -94,9 +94,9 @@ describe('renderPublicCall', () => {
     const html = renderPublicCall(signalFixture(), opts());
     const { text, entities } = parseHtml(html);
 
-    expect(text).toContain('PUMPGOD CALL');
-    expect(text).toContain('Troll in Hood ($TROLL)');
-    expect(text).toContain('MC $36.3K');
+    expect(text).toContain('PUMPGOD');
+    expect(text).toContain('Troll in Hood | TROLL');
+    expect(text).toContain('📊 Market Cap: $36.3K');
     expect(text).toContain('0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90');
     expect(text).not.toContain('<');
 
@@ -109,6 +109,66 @@ describe('renderPublicCall', () => {
       expect(e.offset).toBeGreaterThanOrEqual(0);
       expect(e.offset + e.length).toBeLessThanOrEqual(text.length);
     }
+  });
+
+  // The whole point of the redesign: one fact per line, so the reader finds the number they
+  // want by its icon. A regression here reads as "we quietly went back to the wall of text".
+  it('gives each stat its own line, and the address a line of its own under CA:', () => {
+    const { text } = parseHtml(renderPublicCall(signalFixture(), opts({ footer: '' })));
+    const lines = text.split('\n');
+
+    expect(lines.slice(0, 5)).toEqual([
+      'PUMPGOD ⚡',
+      'Troll in Hood | TROLL',
+      '',
+      'CA:',
+      '0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90',
+    ]);
+    expect(lines).toContain('📊 Market Cap: $36.3K');
+    expect(lines).toContain('🌐 Robinhood');
+    expect(lines).toContain('💧 Liquidity: $16.9K');
+    expect(lines).toContain('📈 Volume: $26.4K');
+    expect(lines).toContain('⏰ Token Age: 4h');
+  });
+
+  // Detail that needs a second read belongs in the war room, not in a signal.
+  it('leaves the close-up analysis out', () => {
+    const signal = signalFixture();
+    signal.call.stats.holders = 412;
+    const { text } = parseHtml(renderPublicCall(signal, opts()));
+
+    expect(text).not.toContain('holders');
+    expect(text).not.toContain('labelled');
+    expect(text).not.toContain('%');
+    expect(text).not.toContain('Scan');
+  });
+
+  it('counts confirmations only when more than one group called it', () => {
+    expect(renderPublicCall(signalFixture(), opts())).not.toContain('confirmed');
+
+    const seconded = signalFixture();
+    seconded.confirmations = ['soaps', 'alpha'];
+    expect(renderPublicCall(seconded, opts())).toContain('✅ 2× confirmed');
+  });
+
+  // A DexScreener search wearing a Buy label is worse than no button — it looks like a swap
+  // and is not one. The EVM template ships blank, so this is the default path, not an edge.
+  it('drops the Buy link when no terminal is configured for that chain', () => {
+    const evm = parseHtml(renderPublicCall(signalFixture(), opts())).text;
+    expect(evm).toContain('DexScreener');
+    expect(evm).not.toContain('Buy');
+
+    const sol = signalFixture();
+    sol.call.token.chain = 'solana';
+    expect(parseHtml(renderPublicCall(sol, opts())).text).toContain('DexScreener · Buy');
+  });
+
+  it('puts a danger flag above the links, not below them', () => {
+    const risky = signalFixture();
+    risky.risk = { level: 'danger', flags: [{ code: 'thin', level: 'danger', detail: 'Liquidity is not locked' }] };
+    const { text } = parseHtml(renderPublicCall(risky, opts()));
+
+    expect(text.indexOf('Liquidity is not locked')).toBeLessThan(text.indexOf('DexScreener'));
   });
 
   it('hides the source group unless explicitly enabled', () => {
