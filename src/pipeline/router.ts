@@ -1,6 +1,6 @@
 import { Api, TelegramClient } from 'telegram';
 import type { AppConfig } from '../config';
-import type { Signal, Source } from '../types';
+import type { ParsedCall, Signal, Source } from '../types';
 import { parseCall } from '../parse';
 import { renderPublicCall, renderWarRoomCall } from '../format/call';
 import { editFast, sendFast } from '../telegram/send';
@@ -23,6 +23,21 @@ interface Staged {
   signal: Signal;
   stagedAt: number;
   fired: boolean;
+}
+
+/** A call ready to be judged, however we came by it. */
+export interface RouteInput {
+  source: Source;
+  call: ParsedCall;
+  /** Provenance. A Telegram chat and message id, or a detector id and 0. */
+  chatId: string;
+  messageId: number;
+  /** What `npm run replay` re-parses. Empty for on-chain detections — there was no text. */
+  rawText: string;
+  /** Unix seconds this originated: when the group posted, or when the pool was created. */
+  originUnix: number;
+  recvAt: number;
+  parsedAt: number;
 }
 
 export class Router {
@@ -50,43 +65,64 @@ export class Router {
     record('parse', parsedAt - incoming.recvAt);
 
     if (!call) return;
-    if (!this.passesFilters(incoming.source, call)) return;
 
-    const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, incoming.source.id);
-
-    // Telegram stamps messages in whole seconds, so this is coarse — but it only needs to
-    // separate "just now" from "recovered after an outage".
-    const ageSec = Math.max(0, Math.round(Date.now() / 1000 - incoming.messageUnix));
-
-    const signal: Signal = {
-      id: `${Date.now().toString(36)}-${(this.counter++).toString(36)}`,
+    this.route({
       source: incoming.source,
+      call,
       chatId: incoming.chatId,
       messageId: incoming.messageId,
       rawText: incoming.text,
+      originUnix: incoming.messageUnix,
+      recvAt: incoming.recvAt,
+      parsedAt,
+    });
+  }
+
+  /**
+   * Everything after "we are holding a call": dedupe, filters, screening, routing. Shared so
+   * a token detected on-chain goes through exactly the same gates as one lifted out of a
+   * Telegram message — the checks that protect the channel should not depend on how we
+   * heard about the coin.
+   */
+  route(input: RouteInput): void {
+    const { source, call } = input;
+    if (!this.passesFilters(source, call)) return;
+
+    const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, source.id);
+
+    // Seconds since this originated: when a group posted it, or when the pool was created.
+    // Coarse either way, but it only needs to separate "just now" from "we were late".
+    const ageSec = Math.max(0, Math.round(Date.now() / 1000 - input.originUnix));
+
+    const signal: Signal = {
+      id: `${Date.now().toString(36)}-${(this.counter++).toString(36)}`,
+      source,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      rawText: input.rawText,
       call,
       confirmations: entry.sources,
       ageSec,
       stale: ageSec > this.config.maxCallAgeSec,
-      // Pure arithmetic on numbers the source already gave us — sub-microsecond, so it can
-      // gate the publish. Re-read against real market data in `upgrade`.
+      // Pure arithmetic on numbers we already hold — sub-microsecond, so it can gate the
+      // publish. Re-read against real market data in `upgrade`.
       risk: assess(call),
       timings: {
-        messageUnix: incoming.messageUnix,
-        recvAt: incoming.recvAt,
-        parsedAt,
+        messageUnix: input.originUnix,
+        recvAt: input.recvAt,
+        parsedAt: input.parsedAt,
         wallClockMs: Date.now(),
       },
     };
 
     if (!first) {
       log.debug(`dup ${call.token.address} (${entry.sources.join(', ')})`);
-      journal.write('duplicate', { id: signal.id, source: incoming.source.id, address: call.token.address });
+      journal.write('duplicate', { id: signal.id, source: source.id, address: call.token.address });
       return;
     }
 
-    if (incoming.source.mode === 'shadow') {
-      log.info(`👻 shadow ${label(signal)} from ${incoming.source.label}`);
+    if (source.mode === 'shadow') {
+      log.info(`👻 shadow ${label(signal)} from ${source.label}`);
       journal.write('shadow', this.record(signal));
       // Tracked anyway — knowing what a source *would* have made us is the whole
       // reason shadow mode exists.
@@ -99,7 +135,7 @@ export class Router {
     // an outage or were too slow to see. A dangerous one is untradable — no exit liquidity,
     // an unbacked price, or a move that already happened. Neither is auto-published.
     const divert = signal.stale || signal.risk.level === 'danger';
-    if (incoming.source.mode === 'auto' && !divert) {
+    if (source.mode === 'auto' && !divert) {
       void this.fire(signal);
     } else {
       if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
