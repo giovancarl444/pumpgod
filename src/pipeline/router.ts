@@ -7,7 +7,7 @@ import type { IncomingMessage, IncomingReaction } from '../telegram/ingest';
 import { Dedupe } from './dedupe';
 import { enrich } from './enrich';
 import { MANUAL_SOURCE } from './manual';
-import { assess } from './risk';
+import { assess, headlineFlag, unsellable } from './risk';
 import { record } from '../metrics/latency';
 import { journal } from '../store/journal';
 import { Tracker } from '../track/tracker';
@@ -207,8 +207,16 @@ export class Router {
     // twice is how an admin's call goes quiet instead of out, since the second confirmation
     // lives in a war room that is optional and may not be there to hold it. The screen is
     // not silenced: its flags ride on the card, and `flagged` carries them back to the admin.
+    //
+    // With one exception, and it is the only thing a command cannot wave through. Every other
+    // flag is a matter of degree that an admin can reasonably overrule — they may know the pool
+    // is thin and be calling it anyway. A live freeze or mint authority is not a judgement about
+    // how good the coin is: it is the chain stating that one key holder decides whether anybody
+    // who buys is allowed to sell. Publishing that on command would put a card in the channel
+    // whose own warning line explains why it should not have been posted.
     const flagged = dangerDetail(signal);
-    const divert = (signal.stale || signal.risk.level === 'danger') && !source.commanded;
+    const waivedByCommand = source.commanded && !unsellable(signal.risk.flags);
+    const divert = (signal.stale || signal.risk.level === 'danger') && !waivedByCommand;
     if (source.mode === 'auto' && !divert) {
       if (flagged) log.warn(`⚠️  publishing ${label(signal)} on command despite: ${flagged}`);
       void this.fire(signal);
@@ -365,7 +373,7 @@ export class Router {
       journal.write('skipped', { id: staged.signal.id });
       // Somebody read this card and said no. That is the only thing that makes a later "we
       // passed on this" post true rather than a card nobody opened.
-      this.tracker?.decline(staged.signal, staged.signal.risk.flags[0]?.detail);
+      this.tracker?.decline(staged.signal, headlineFlag(staged.signal.risk.flags)?.detail);
       return;
     }
 

@@ -1,6 +1,7 @@
 import type { Signal } from '../types';
 import type { Button } from '../telegram/transport';
 import { chainLabel, dexScreenerUrl, explorerUrl, hasTradeUrl, tradeUrl } from '../parse/chains';
+import { headlineFlag } from '../pipeline/risk';
 
 export interface RenderOptions {
   footer: string;
@@ -73,7 +74,9 @@ function riskLine(signal: Signal, verbose: boolean): string | undefined {
 
   const icon = level === 'danger' ? '🚨' : '⚠️';
   if (verbose) return flags.map((f) => `${f.level === 'danger' ? '🚨' : '⚠️'} ${escapeHtml(f.detail)}`).join('\n');
-  return `${icon} <b>${escapeHtml(flags[0]!.detail)}</b>`;
+  // The worst flag rather than the first. They are not the same list position, and the one
+  // time it matters most is the one the reader can do least about.
+  return `${icon} <b>${escapeHtml(headlineFlag(flags)!.detail)}</b>`;
 }
 
 function signalTitle(signal: Signal): string {

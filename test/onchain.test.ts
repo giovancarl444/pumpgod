@@ -15,7 +15,7 @@ const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const METADATA_PDA = 'FDZZbyY9XGpL3CNKUZxLk3wFTTQYL3TkDiDzqxrizcPN';
 const RAYDIUM_AUTHORITY = '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1';
 
-type Reply = Record<string, unknown> | 'rate-limited';
+type Reply = Record<string, unknown> | 'rate-limited' | 'rate-limited-inside-a-200';
 
 /** Answers RPC calls by method name, so a test only states the parts it cares about. */
 function chain(replies: Record<string, Reply>) {
@@ -26,6 +26,18 @@ function chain(replies: Record<string, Reply>) {
       const reply = replies[method];
       if (!reply || reply === 'rate-limited') {
         return { ok: false, status: 429, json: async () => ({}) } as Response;
+      }
+      // Observed verbatim from `api.mainnet-beta.solana.com`, which is why it is spelt out
+      // rather than folded into the branch above: the refusal is a 200.
+      if (reply === 'rate-limited-inside-a-200') {
+        return {
+          ok: true,
+          json: async () => ({
+            jsonrpc: '2.0',
+            error: { code: 429, message: 'Too many requests for a specific RPC call' },
+            id: 1,
+          }),
+        } as Response;
       }
       return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: reply }) } as Response;
     }),
@@ -169,6 +181,17 @@ describe('reading the holders', () => {
 
   it('says it does not know when the holder call is rate limited', async () => {
     chain({ getTokenLargestAccounts: 'rate-limited' });
+    await expect(holderFacts('mint', 1000n)).resolves.toBeUndefined();
+  });
+
+  /**
+   * How Solana's own endpoint actually refuses this call, checked against it rather than
+   * assumed: **HTTP 200**, with the 429 in the JSON-RPC error body. A client that only read
+   * the status would take that for a successful lookup returning no holders — and a token
+   * with no holders reads as perfectly distributed.
+   */
+  it('is not fooled by a refusal that arrives with a 200 on it', async () => {
+    chain({ getTokenLargestAccounts: 'rate-limited-inside-a-200' });
     await expect(holderFacts('mint', 1000n)).resolves.toBeUndefined();
   });
 

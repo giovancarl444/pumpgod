@@ -1,3 +1,4 @@
+import type { ChainFacts, HolderFacts, MintFacts } from '../types';
 import { log } from '../log';
 
 /**
@@ -16,45 +17,7 @@ import { log } from '../log';
 /** Solana's own endpoint works and rate-limits hard. Anything real wants a keyed free tier. */
 const PUBLIC_RPC = 'https://api.mainnet-beta.solana.com';
 
-/**
- * Facts about the mint account.
- *
- * Both authorities are `undefined` when revoked, which is the healthy state, and hold an
- * address when they are live. They are stored as the address rather than a boolean so the war
- * room can say *who* still holds the key.
- */
-export interface MintFacts {
-  /** Set means the supply is not fixed and more can be printed at will. */
-  mintAuthority?: string;
-  /**
-   * Set means someone can freeze a token account. A frozen holder cannot sell at any price,
-   * which makes this the purest rug on the chain: the chart need never move for the money to
-   * be gone. It is one field, and almost nobody checks it.
-   */
-  freezeAuthority?: string;
-  /**
-   * A u64, which does not fit in a JavaScript number — BONK alone is 8.8e18, well past the
-   * 9.007e15 where doubles stop counting accurately. Holding this as a `number` would quietly
-   * corrupt every share calculation below, and only for the large-supply memecoins that are
-   * the entire subject.
-   */
-  supply: bigint;
-  decimals: number;
-}
-
-/** How the supply is spread, once the pools are taken out of the picture. */
-export interface HolderFacts {
-  /** The largest single non-programmatic holder, as a fraction of supply. */
-  topShare: number;
-  /** The ten largest together. One wallet at 30% and ten at 31% are different situations. */
-  top10Share: number;
-  /** How many of the top accounts were pools or programs rather than people. */
-  poolAccounts: number;
-  /** Holders actually examined. The RPC returns at most twenty, so this is never the whole book. */
-  examined: number;
-}
-
-interface RpcOptions {
+export interface RpcOptions {
   /** Overridable so a keyed endpoint can be configured without touching call sites. */
   endpoint?: string;
   timeoutMs?: number;
@@ -73,14 +36,18 @@ async function rpc<T>(method: string, params: unknown[], options: RpcOptions = {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
     });
     if (!res.ok) {
-      // 429 is the ordinary answer from the public endpoint for the holder call, so it is
-      // logged at debug rather than treated as an incident. The caller turns it into an
-      // explicit "could not check", which is the part that must never look like a pass.
+      // Being turned away is the ordinary answer from the public endpoint, so it is logged at
+      // debug rather than treated as an incident. The caller turns it into an explicit
+      // "could not check", which is the part that must never look like a pass.
       log.debug(`rpc ${method} returned ${res.status}`);
       return undefined;
     }
-    const body = (await res.json()) as { result?: T; error?: { message?: string } };
+    const body = (await res.json()) as { result?: T; error?: { code?: number; message?: string } };
     if (body.error) {
+      // Both branches matter, and only one of them is obvious. `api.mainnet-beta.solana.com`
+      // answers `getTokenLargestAccounts` with **HTTP 200** carrying `error.code: 429`, so a
+      // client that only checked the status would read a rate limit as a successful lookup
+      // returning no holders — a token with no holders being, of course, a clean bill of health.
       log.debug(`rpc ${method} failed: ${body.error.message ?? 'no reason given'}`);
       return undefined;
     }
@@ -189,6 +156,20 @@ export async function holderFacts(
     poolAccounts,
     examined: accounts.length,
   };
+}
+
+/**
+ * Both questions, asked together, for a caller that just wants to know about a token.
+ *
+ * The holder call needs the supply, so the two cannot be issued in parallel — and it is the
+ * call the public endpoint refuses most often, which is exactly why its answer is a separate
+ * field. A mint whose authorities are readable and whose holders are not is a real and common
+ * state, and it has to be reportable as such rather than collapsing into a single verdict.
+ */
+export async function chainFacts(mint: string, options: RpcOptions = {}): Promise<ChainFacts> {
+  const facts = await mintFacts(mint, options);
+  if (!facts) return {};
+  return { mint: facts, holders: await holderFacts(mint, facts.supply, options) };
 }
 
 /**

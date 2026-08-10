@@ -18,16 +18,37 @@ function pair(over: Record<string, unknown> = {}) {
   };
 }
 
-/** Serves a canned response per URL fragment, so a test states exactly which hops it expects. */
+/**
+ * Serves a canned response per URL fragment, so a test states exactly which hops it expects.
+ *
+ * The returned list holds market hops only. A Solana call also reads the mint, and counting
+ * that here would make every assertion about "how many times did we ask DexScreener" quietly
+ * depend on how many questions we ask the chain — two things that should move independently.
+ */
 function dex(routes: Array<[string, unknown]>) {
   const seen: string[] = [];
   const fetchMock = vi.fn(async (url: string) => {
-    seen.push(url);
+    if (url.includes('dexscreener')) seen.push(url);
     const hit = routes.find(([fragment]) => url.includes(fragment));
     return { ok: true, json: async () => ({ pairs: hit ? hit[1] : [] }) } as Response;
   });
   vi.stubGlobal('fetch', fetchMock);
   return seen;
+}
+
+/** A stubbed Solana RPC answering by method name, alongside whatever DexScreener is doing. */
+function chain(replies: Record<string, unknown>, routes: Array<[string, unknown]>) {
+  const fetchMock = vi.fn(async (url: string, init?: { body?: string }) => {
+    if (url.includes('dexscreener')) {
+      const hit = routes.find(([fragment]) => url.includes(fragment));
+      return { ok: true, json: async () => ({ pairs: hit ? hit[1] : [] }) } as Response;
+    }
+    const { method } = JSON.parse(init?.body ?? '{}') as { method: string };
+    const result = replies[method];
+    if (!result) return { ok: false, status: 429, json: async () => ({}) } as Response;
+    return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result }) } as Response;
+  });
+  vi.stubGlobal('fetch', fetchMock);
 }
 
 afterEach(() => {
@@ -88,6 +109,90 @@ describe('resolveManualCall', () => {
     expect(out.call.ticker).toBe('BONK');
     expect(out.call.token.chain).toBe('solana');
     expect(seen).toHaveLength(1);
+  });
+
+  /**
+   * The market can say whether the pool is deep. Only the chain can say whether the buyer will
+   * be allowed to sell out of it, so `/signal` pays for the round trip that the relay path
+   * cannot afford. These check that it happens, that it reads the *resolved* address, and that
+   * failing to reach the chain does not take the call down with it.
+   */
+  describe('and what only the chain can say', () => {
+    const mint = {
+      context: { slot: 1 },
+      value: {
+        owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+        data: {
+          program: 'spl-token',
+          parsed: {
+            type: 'mint',
+            info: { mintAuthority: null, freezeAuthority: 'FRZ', supply: '1000', decimals: 5 },
+          },
+        },
+      },
+    };
+
+    it('reads the mint and hands the facts on with the call', async () => {
+      chain({ getAccountInfo: mint }, [[`/tokens/${TOKEN}`, [pair()]]]);
+      const out = await resolveManualCall(TOKEN, 2000);
+
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.call.onchain?.mint?.freezeAuthority, 'they can stop you selling').toBe('FRZ');
+      expect(out.call.onchain?.mint?.supply).toBe(1000n);
+    });
+
+    // The chain read is a bonus on top of a call that already resolved. A rate-limited RPC
+    // must cost us the check and nothing else — dropping the call would turn a busy endpoint
+    // into an outage, and the screen already reports the missing read as "unknown".
+    it('still makes the call when the chain will not answer', async () => {
+      chain({}, [[`/tokens/${TOKEN}`, [pair()]]]);
+      const out = await resolveManualCall(TOKEN, 2000);
+
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.call.onchain?.mint).toBeUndefined();
+    });
+
+    // A chart link resolves to a different address than the one pasted. Reading the pool as
+    // if it were the mint would report authorities for the wrong account entirely.
+    it('reads the mint it resolved to, not the pool address that was pasted', async () => {
+      const asked: string[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init?: { body?: string }) => {
+          if (url.includes('dexscreener')) {
+            const pairs = url.includes(`/tokens/${TOKEN}`) || url.includes(POOL) ? [pair()] : [];
+            return { ok: true, json: async () => ({ pairs }) } as Response;
+          }
+          const body = JSON.parse(init?.body ?? '{}') as { params?: unknown[] };
+          asked.push(String(body.params?.[0]));
+          return { ok: false, status: 429, json: async () => ({}) } as Response;
+        }),
+      );
+
+      await resolveManualCall(`https://dexscreener.com/solana/${POOL}`, 2000);
+      expect(asked).toContain(TOKEN);
+      expect(asked).not.toContain(POOL);
+    });
+
+    // Only Solana has this read. An EVM address must not be sent to a Solana RPC, which would
+    // spend a round trip to be told nothing.
+    it('does not ask a Solana node about an Ethereum token', async () => {
+      const evm = '0xa206753eb19D8E3F9Ae3313ADb467BdC2a7a4d90';
+      const calls: string[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          calls.push(url);
+          const pairs = url.includes(evm) ? [pair({ chainId: 'ethereum', baseToken: { address: evm, name: 'X', symbol: 'x' } })] : [];
+          return { ok: true, json: async () => ({ pairs }) } as Response;
+        }),
+      );
+
+      await resolveManualCall(evm, 2000);
+      expect(calls.every((u) => u.includes('dexscreener'))).toBe(true);
+    });
   });
 
   // Fartcoin's name and symbol are both `"Fartcoin "` on the live API, which renders the

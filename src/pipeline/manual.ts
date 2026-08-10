@@ -2,6 +2,7 @@ import type { Chain, ParsedCall, Source, TokenRef } from '../types';
 import { classifyAddress, extractAddresses } from '../parse/addresses';
 import { CHAIN_KIND, chainFromSlug } from '../parse/chains';
 import { aggregate, pairsForToken, search, tokenText, type TokenView } from './dexscreener';
+import { chainFacts } from './onchain';
 
 /**
  * Our own calls are attributed like any other source, so `npm run scorecard` answers the
@@ -47,11 +48,16 @@ export function parseCommand(text: string): string | undefined {
  *
  * `chains` restricts what we are willing to call. Passing it here as well as at the router
  * means a rejected paste gets told why, instead of being silently dropped.
+ *
+ * `rpc` is a Solana endpoint. Given one, the mint is read before the call is returned, so the
+ * screen can answer "can they stop us selling" and not only "can we sell" — the check nobody
+ * runs by hand in the thirty seconds they give themselves to decide.
  */
 export async function resolveManualCall(
   input: string,
   timeoutMs: number,
   chains?: Chain[],
+  rpc?: string,
 ): Promise<ManualOutcome> {
   const query = addressIn(input);
   if (!query) {
@@ -102,6 +108,13 @@ export async function resolveManualCall(
     };
   }
 
+  // After resolution rather than alongside it, because a chart link resolves to a different
+  // address than the one pasted and reading the wrong mint would be worse than reading none.
+  // It costs a round trip on a path that, unlike the relay, is racing nobody — and it buys the
+  // only check on the card that the market data cannot produce at any speed.
+  const onchain =
+    token.chain === 'solana' ? await chainFacts(address, { endpoint: rpc, timeoutMs }) : undefined;
+
   return {
     ok: true,
     query,
@@ -113,6 +126,7 @@ export async function resolveManualCall(
       stats,
       imageUrl: view.imageUrl,
       candidates: [token],
+      onchain,
     },
   };
 }

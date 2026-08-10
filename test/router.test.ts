@@ -520,6 +520,73 @@ describe('Router', () => {
     });
   });
 
+  /**
+   * `/signal` is the decision — an admin can publish over a thin pool or a price that already
+   * ran, because those are judgements they may be better placed to make than the screen is.
+   *
+   * The chain's two authority checks are not judgements. They say a key holder can decide
+   * whether anyone who buys is allowed to sell, and no reading of the chart changes that, so
+   * they are the one thing the command cannot wave through. The tests here are the boundary:
+   * the market flags stay overridable, and only a *positive* reading blocks — a mint we could
+   * not reach must never be able to manufacture a refusal out of a busy endpoint.
+   */
+  describe('the one flag a command cannot wave through', () => {
+    const DEV = '9AhKqLR67hwapvG8SA2JFXaCshXc9nALJjpKaHZrsbkw';
+    const mint = (over: Partial<NonNullable<ParsedCall['onchain']>['mint']> = {}) => ({
+      supply: 1_000_000n,
+      decimals: 6,
+      ...over,
+    });
+
+    it('holds back a coin whose owner can still stop you selling, even on command', async () => {
+      const { router, sent } = harness();
+      const call = { ...manualCall(), onchain: { mint: mint({ freezeAuthority: DEV }) } };
+
+      const out = router.callManual(call, '/signal x', performance.now());
+      await settle();
+
+      expect(out.kind).toBe('review');
+      if (out.kind !== 'review') return;
+      expect(out.reason, 'and says why, in the screen’s own words').toContain('stop you selling');
+      // It went to the war room to be looked at, and nowhere near the members.
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.peer).toBe(WAR_ROOM);
+    });
+
+    it('holds back a coin whose supply can still be printed, even on command', async () => {
+      const { router } = harness();
+      const call = { ...manualCall(), onchain: { mint: mint({ mintAuthority: DEV }) } };
+
+      expect(router.callManual(call, '/signal x', performance.now()).kind).toBe('review');
+      await settle();
+    });
+
+    // The whole point of the override staying intact: an admin who knows the pool is thin can
+    // still make the call. Blocking these too would make `/signal` unusable and teach nobody
+    // anything, and the flag rides on the card either way.
+    it('still lets a command through a thin pool, which is a judgement and not a fact', async () => {
+      const { router } = harness();
+      const out = router.callManual(
+        { ...manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }), onchain: { mint: mint() } },
+        '/signal x',
+        performance.now(),
+      );
+      await settle();
+
+      expect(out.kind).toBe('publishing');
+    });
+
+    // A rate-limited RPC is the ordinary case on a keyless endpoint. If that blocked calls,
+    // the check would be an outage switch wired to somebody else's capacity planning.
+    it('publishes on command when the chain could not be reached at all', async () => {
+      const { router } = harness();
+      const out = router.callManual({ ...manualCall(), onchain: {} }, '/signal x', performance.now());
+      await settle();
+
+      expect(out.kind).toBe('publishing');
+    });
+  });
+
   it('ignores a reaction on a message it never staged', async () => {
     const { router, sent } = harness();
     router.handleReaction({ chatId: 'war', messageId: 999, emoji: '🚀', recvAt: performance.now() });

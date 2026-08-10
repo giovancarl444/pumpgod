@@ -57,7 +57,12 @@ export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) 
 
     // Resolving market data first is what makes this callable at all: an address on its own
     // has no numbers for the screen to read. Nobody is being raced, so the hop is free.
-    const outcome = await resolveManualCall(argument, Math.max(config.enrichTimeoutMs, 5000), config.chains);
+    const outcome = await resolveManualCall(
+      argument,
+      Math.max(config.enrichTimeoutMs, 5000),
+      config.chains,
+      config.solanaRpc,
+    );
     if (!outcome.ok) {
       log.warn(`manual call rejected: ${outcome.reason}`);
       await say(`✗ ${escapeHtml(outcome.reason)}`, cmd);

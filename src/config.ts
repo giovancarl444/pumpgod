@@ -95,6 +95,17 @@ export interface PresentationConfig {
   /** Signup referral link and its call-to-action, rendered once per public call. */
   referralUrl?: string;
   referralLabel: string;
+  /**
+   * Solana RPC used for the mint and holder checks. Unset falls back to Solana's own endpoint,
+   * which is the default `onchain.ts` already carries — kept in one place rather than restated
+   * here, so there is no second default to drift.
+   *
+   * That public endpoint reads a mint fine and **refuses the holder call outright**: it answers
+   * `getTokenLargestAccounts` with an HTTP 200 carrying a 429 inside it. So authorities are
+   * checked out of the box, concentration is not, and any keyed free tier lifts that with no
+   * other change anywhere.
+   */
+  solanaRpc?: string;
 }
 
 export interface AppConfig extends PresentationConfig {
@@ -128,6 +139,7 @@ export function loadPresentation(): PresentationConfig {
     tradeUrlEvm: process.env.TRADE_URL_EVM?.trim() ?? '',
     referralUrl: process.env.REFERRAL_URL?.trim() || undefined,
     referralLabel: process.env.REFERRAL_LABEL?.trim() || 'Trade these faster',
+    solanaRpc: process.env.SOLANA_RPC?.trim() || undefined,
   };
 }
 

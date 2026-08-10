@@ -120,3 +120,124 @@ describe('assess', () => {
     });
   });
 });
+
+/**
+ * The half of the screen the market cannot answer.
+ *
+ * Every check above asks whether the pool can be sold into. None of them can ask whether the
+ * seller will be *allowed* to sell, because that is not a fact about the pool. These tests are
+ * about the two ways that answer goes wrong: reading a failed lookup as a clean bill of health,
+ * and flagging so freely that the one flag that matters gets lost among the others.
+ */
+describe('what only the chain can say', () => {
+  const HEALTHY: Stats = { marketCapUsd: 36_270, liquidityUsd: 16_910, volumeUsd: 26_410 };
+  const DEV = '9AhKqLR67hwapvG8SA2JFXaCshXc9nALJjpKaHZrsbkw';
+
+  /** A healthy call, so anything that shows up in the flags came from the chain facts. */
+  function withChain(onchain: ParsedCall['onchain']): ParsedCall {
+    return { ...call(HEALTHY), onchain };
+  }
+
+  const mint = (over: Partial<NonNullable<ParsedCall['onchain']>['mint']> = {}) => ({
+    supply: 1_000_000n,
+    decimals: 6,
+    ...over,
+  });
+
+  const spread = (topShare: number, top10Share = topShare) => ({
+    topShare,
+    top10Share,
+    poolAccounts: 1,
+    examined: 20,
+  });
+
+  it('refuses a token whose owner can still stop you selling', () => {
+    const read = assess(withChain({ mint: mint({ freezeAuthority: DEV }) }));
+
+    expect(read.level, 'the purest rug there is').toBe('danger');
+    expect(read.flags.map((f) => f.code)).toEqual(['freeze-authority']);
+    expect(read.flags[0]?.detail, 'names who holds it, so it can be checked').toContain('9AhK');
+  });
+
+  it('refuses a token whose supply can still be printed', () => {
+    const read = assess(withChain({ mint: mint({ mintAuthority: DEV }) }));
+
+    expect(read.level).toBe('danger');
+    expect(read.flags.map((f) => f.code)).toEqual(['mint-authority']);
+  });
+
+  // The healthy state, and the common one: pump.fun revokes both at launch. If this said
+  // anything at all, every good token would carry a warning and the warnings would stop working.
+  it('says nothing at all about a mint with both authorities revoked', () => {
+    expect(assess(withChain({ mint: mint() })).flags).toHaveLength(0);
+  });
+
+  /**
+   * The whole point of the module, stated as a test: silence is not a pass. A mint minted
+   * seconds ago is exactly the case — the account exists before the indexers have it, and a
+   * brand new coin is the one we are asked about fastest.
+   */
+  it('says the mint is unknown rather than passing it', () => {
+    const read = assess(withChain({}));
+
+    expect(read.level).toBe('caution');
+    expect(read.flags.map((f) => f.code)).toEqual(['unknown-mint']);
+  });
+
+  // The relay path skips the chain read on purpose, since the round trip costs more than it
+  // buys when another group has already posted. It must not therefore warn about every call.
+  it('says nothing when the chain was never asked, as opposed to asked and silent', () => {
+    expect(assess(call(HEALTHY)).flags).toHaveLength(0);
+  });
+
+  it('refuses one wallet that could end the token by itself', () => {
+    const read = assess(withChain({ mint: mint(), holders: spread(0.62) }));
+
+    expect(read.level).toBe('danger');
+    expect(read.flags.map((f) => f.code)).toEqual(['whale']);
+  });
+
+  /**
+   * The threshold below `WHALE_DANGER` could not be calibrated — the keyless RPC blocks the
+   * holder call — so it states a number instead of refusing on one. This test is the guard on
+   * that: an uncalibrated guess must never be able to kill a call on its own.
+   */
+  it('states a large holder as a number rather than refusing on an uncalibrated threshold', () => {
+    const read = assess(withChain({ mint: mint(), holders: spread(0.31) }));
+
+    expect(read.level).toBe('caution');
+    expect(read.flags[0]?.detail).toContain('31.0%');
+  });
+
+  it('catches ten wallets holding between them what one of them could not', () => {
+    const read = assess(withChain({ mint: mint(), holders: spread(0.09, 0.72) }));
+
+    expect(read.flags.map((f) => f.code)).toEqual(['whale']);
+    expect(read.flags[0]?.detail).toContain('top 10');
+  });
+
+  // One fact told twice reads as padding on a card someone has a second to scan.
+  it('does not say the same thing twice when the top wallet already made the point', () => {
+    const read = assess(withChain({ mint: mint(), holders: spread(0.55, 0.95) }));
+    expect(read.flags.filter((f) => f.code === 'whale')).toHaveLength(1);
+  });
+
+  it('passes a token that is genuinely spread out', () => {
+    expect(assess(withChain({ mint: mint(), holders: spread(0.04, 0.2) })).flags).toHaveLength(0);
+  });
+
+  /**
+   * The holder call is refused constantly on a keyless endpoint. A caution on every call is a
+   * caution nobody reads — and it would arrive in the same list as the freeze-authority flag,
+   * so crying wolf here costs us the one flag that actually means "do not touch".
+   */
+  it('stays quiet about holders it could not read, having already read the mint', () => {
+    expect(assess(withChain({ mint: mint() })).flags).toHaveLength(0);
+  });
+
+  // Both halves survive together: the market screen is not replaced by the chain screen.
+  it('reports a thin pool and a live freeze authority in the same breath', () => {
+    const thin = { ...call({ marketCapUsd: 50_000, liquidityUsd: 900 }), onchain: { mint: mint({ freezeAuthority: DEV }) } };
+    expect(assess(thin).flags.map((f) => f.code)).toEqual(['thin', 'freeze-authority']);
+  });
+});
