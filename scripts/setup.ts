@@ -5,6 +5,7 @@ import { stdin, stdout } from 'node:process';
 import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { config as loadEnv } from 'dotenv';
+import { normalisePeerId } from '../src/config';
 
 /**
  * Everything between a fresh clone and a working `/signal`, in one command.
@@ -190,21 +191,33 @@ function idFor(row: Destination, taken: Set<string>): string {
  * our published calls back in as though another group had made them — inflating the very
  * table that is supposed to compare us against them.
  */
+/**
+ * One chat written any of the ways this project accepts. Telegram's own UI shows a channel as
+ * -100xxxxxxxxxx while the wire protocol uses the bare id, and `.env` and `config/sources.json`
+ * both take either — `loadSources` normalises on the way in. Matching on the raw string here
+ * instead would make a hand-written -100 id look like a different chat from the same chat
+ * listed by `getDialogs`, which is how our own channel gets offered as a group to watch.
+ */
+function peerKey(value: string | undefined): string | undefined {
+  const bare = value?.trim().replace(/^@/, '').toLowerCase();
+  return bare ? normalisePeerId(bare) : undefined;
+}
+
 export function watchable(rows: Destination[], ours: Array<string | undefined>): Destination[] {
-  const mine = ours.map((v) => v?.trim().replace(/^@/, '').toLowerCase()).filter(Boolean) as string[];
-  return rows.filter(
-    (row) => !mine.includes(row.id.toLowerCase()) && !(row.username && mine.includes(row.username.toLowerCase())),
-  );
+  const mine = new Set(ours.map(peerKey).filter(Boolean) as string[]);
+  return rows.filter((row) => !isSameChat(row, mine));
 }
 
 function watchedRefs(existing: WatchedSource[]): Set<string> {
-  return new Set(
-    existing.flatMap((s) => [s.peerId, s.username?.replace(/^@/, '').toLowerCase()].filter(Boolean) as string[]),
-  );
+  return new Set(existing.flatMap((s) => [peerKey(s.peerId), peerKey(s.username)].filter(Boolean) as string[]));
 }
 
 function isWatched(row: Destination, refs: Set<string>): boolean {
-  return refs.has(row.id) || (!!row.username && refs.has(row.username.toLowerCase()));
+  return isSameChat(row, refs);
+}
+
+function isSameChat(row: Destination, keys: Set<string>): boolean {
+  return keys.has(normalisePeerId(row.id)) || (!!row.username && keys.has(row.username.toLowerCase()));
 }
 
 export function parseChoices(answer: string, max: number): number[] {

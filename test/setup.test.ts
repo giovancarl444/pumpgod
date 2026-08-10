@@ -32,6 +32,15 @@ describe('which rooms are offered', () => {
     expect(watchable(rows, ['pumpgod'])).toHaveLength(0);
     expect(watchable(rows, ['@PUMPGOD'])).toHaveLength(0);
   });
+
+  // Telegram's own UI shows a channel as -100xxxxxxxxxx, so that is the form anybody filling
+  // in `.env` by hand copies, and `normalisePeerId` exists precisely so it works. getDialogs
+  // reports the bare id, so matching the raw strings makes one chat look like two — and the
+  // one chat it silently offers to watch is the channel we publish to.
+  it('recognises our own channel written the way Telegram displays it', () => {
+    const rows = [room('pumpgod', { id: '1234567890', broadcast: true }), room('Rival Group')];
+    expect(watchable(rows, ['-1001234567890', undefined]).map((r) => r.title)).toEqual(['Rival Group']);
+  });
 });
 
 describe('what gets added to the watch list', () => {
@@ -55,6 +64,24 @@ describe('what gets added to the watch list', () => {
     ];
     const added = additions([room('Rival Group', { username: 'rivals' }), room('New Group')], existing);
     expect(added.map((s) => s.label)).toEqual(['New Group']);
+  });
+
+  // `loadSources` normalises peerId, so a hand-written -100 id is genuinely being watched.
+  // Read back literally it looks like a stranger, and setup adds the same group a second time
+  // under a fresh id — splitting one group's record across two rows of the ratings table,
+  // which is the one thing that cannot be repaired after the fact.
+  it('recognises a group already listed by its -100 id, rather than adding it twice', () => {
+    const existing: WatchedSource[] = [
+      { id: 'alpha-calls', label: 'Alpha Calls', peerId: '-1001234567890', mode: 'shadow', enabled: true },
+    ];
+    expect(additions([room('Alpha Calls', { id: '1234567890' })], existing)).toEqual([]);
+  });
+
+  it('recognises one already listed by @username against a bare one, and vice versa', () => {
+    const existing: WatchedSource[] = [
+      { id: 'rivals', label: 'Rival Group', username: '@Rivals', mode: 'shadow', enabled: true },
+    ];
+    expect(additions([room('Rival Group', { username: 'rivals' })], existing)).toEqual([]);
   });
 
   // A source's id is what the ratings table keys a group's anonymous label off. Two groups
