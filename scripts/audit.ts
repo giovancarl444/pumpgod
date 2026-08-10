@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ROOT } from '../src/config';
 import { peakSince, priceAt } from '../src/pipeline/history';
@@ -39,11 +39,32 @@ const STORE = resolve(ROOT, 'data/tracked.json');
 /** Below this the two agree in every sense that matters; chart precision is not the subject. */
 const TOLERANCE = 0.02;
 
-interface Finding {
+/**
+ * How far apart the two readings must be before a person is shown the row.
+ *
+ * Adopting the chart and reporting the disagreement are different questions, and conflating
+ * them makes this useless. A call still inside its 24h window has a peak that is the best of
+ * however many samples we managed to take, so the chart is *routinely* a little above it —
+ * that gap is the ordinary work of the tool, not news. Printing all of it buries the one line
+ * that says a recorded number was never true, and a report nobody can read is a report nobody
+ * reads. Everything below the line is still fixed; it is counted rather than narrated.
+ */
+const NOTABLE = 1.25;
+
+/**
+ * Longer than the daemon's poll, so a live writer is always caught rather than caught usually.
+ * A shadow pass saves per channel and is slower, but it also runs for minutes at a stretch, so
+ * the same window sees it.
+ */
+const WRITER_IDLE_SEC = 90;
+
+export interface Finding {
   call: TrackedCall;
-  what: string;
+  what: 'entry' | 'peak';
   was: number | undefined;
   now: number;
+  /** A number that was never true, as against one the chart simply knows better. */
+  fiction?: boolean;
   /** When the chart says the peak landed. Absent for an entry, which is fixed at call time. */
   at?: number;
 }
@@ -76,7 +97,10 @@ async function inspect(call: TrackedCall): Promise<Finding[]> {
    * the rows that could not be priced at the time rather than leaving them permanently marked.
    */
   if (entry !== undefined && (!call.entryFromChart || ratio(entry, call.entryPriceUsd ?? 0) > 1 + TOLERANCE)) {
-    found.push({ call, what: 'entry', was: call.entryPriceUsd, now: entry });
+    // An entry cannot be undersampled the way a peak can — it is one price at one minute, and
+    // both sides claim to be that same price. So any real gap here is one of them being wrong.
+    const gap = ratio(entry, call.entryPriceUsd ?? 0);
+    found.push({ call, what: 'entry', was: call.entryPriceUsd, now: entry, fiction: gap > CONTRADICTED });
   }
 
   const peak = await peakSince(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
@@ -86,33 +110,35 @@ async function inspect(call: TrackedCall): Promise<Finding[]> {
     // only when the sample is further above it than two live pools of a coin can be.
     const contradicted = sampled > peak.priceUsd * CONTRADICTED;
     if (contradicted || peak.priceUsd > sampled * (1 + TOLERANCE)) {
-      found.push({
-        call,
-        what: contradicted ? 'peak (fiction)' : 'peak',
-        was: call.athPriceUsd,
-        now: peak.priceUsd,
-        at: peak.at,
-      });
+      found.push({ call, what: 'peak', was: call.athPriceUsd, now: peak.priceUsd, at: peak.at, fiction: contradicted });
     }
   }
 
   return found;
 }
 
-function apply(finding: Finding): void {
+/**
+ * Adopts one reading, and carries everything derived from it along.
+ *
+ * The distinction that matters here is which figures are observations and which are arithmetic.
+ * Both prices are observations. Both market caps are not — they are scaled from a price, because
+ * supply is fixed for anything in this market and one number derived from another cannot come to
+ * contradict it. So correcting a price silently invalidates every cap standing on it, and a
+ * repair that fixed the price alone would leave a row internally at war with itself: SPX6900's
+ * entry was $772.97 against a real $0.000119, which is also where its $773bn market cap came
+ * from.
+ */
+export function apply(finding: Finding): void {
   const { call, now } = finding;
 
   if (finding.what === 'entry') {
-    // The market cap moves with it. Supply is fixed, so scaling the one we have keeps the two
-    // consistent — where re-reading a cap separately would eventually contradict the price.
-    if (call.entryMcUsd && call.entryPriceUsd) call.entryMcUsd = (call.entryMcUsd * now) / call.entryPriceUsd;
+    const old = call.entryPriceUsd;
+    if (call.entryMcUsd && old) call.entryMcUsd = (call.entryMcUsd * now) / old;
     call.entryPriceUsd = now;
     call.entryFromChart = true;
-    // The peak was a multiple of the old entry. Leaving it would publish a run that never
-    // happened, so it is dropped and re-read below on the same pass.
-    call.athPriceUsd = undefined;
-    call.athMcUsd = undefined;
-    call.athAt = undefined;
+    // The peak's own market cap was scaled off the entry we just moved, so it moves too. Its
+    // *price* is an observation in its own right and is not ours to discard on this evidence.
+    if (call.entryMcUsd && call.athPriceUsd) call.athMcUsd = (call.entryMcUsd * call.athPriceUsd) / now;
     return;
   }
 
@@ -139,14 +165,21 @@ async function main(): Promise<void> {
   console.log(`  reading ${priced.length * 2} charts, roughly ${Math.ceil((priced.length * 2 * 2.2) / 60)} min\n`);
 
   const findings: Finding[] = [];
+  let quiet = 0;
   for (const call of priced) {
     const found = await inspect(call);
     for (const f of found) {
       findings.push(f);
+      const gap = ratio(f.now, f.was ?? 0);
+      if (!f.fiction && gap < NOTABLE) {
+        quiet++;
+        continue;
+      }
       const label = f.call.ticker ? `$${f.call.ticker}` : f.call.address.slice(0, 10);
-      const flag = f.what.includes('fiction') ? '  ✗' : '  ~';
       console.log(
-        `${flag} ${label.padEnd(14)} ${f.what.padEnd(15)} recorded ${price(f.was).padEnd(12)} chart ${price(f.now)}   ${f.call.sourceId}`,
+        `${f.fiction ? '  ✗' : '  ~'} ${label.padEnd(14)} ${f.what.padEnd(6)} ` +
+          `recorded ${price(f.was).padEnd(13)} chart ${price(f.now).padEnd(13)} ` +
+          `${Number.isFinite(gap) ? `${gap.toFixed(gap > 100 ? 0 : 1)}x` : 'new'}   ${f.call.sourceId}`,
       );
     }
   }
@@ -156,11 +189,42 @@ async function main(): Promise<void> {
     return;
   }
 
-  const fictions = findings.filter((f) => f.what.includes('fiction')).length;
-  console.log(`\n  ${findings.length} disagreement(s)${fictions ? `, ${fictions} of them a number that was never true` : ''}`);
+  const fictions = findings.filter((f) => f.fiction).length;
+  console.log(
+    `\n  ${findings.length} disagreement(s)` +
+      (quiet ? `, ${quiet} of them within the ordinary gap between a sampled peak and a charted one` : '') +
+      (fictions ? `\n  ${fictions} number(s) that were never true — these are the ones that matter` : ''),
+  );
 
   if (!fix) {
     console.log('  nothing written — re-run with --fix to adopt the chart\n');
+    return;
+  }
+
+  /**
+   * A repair written underneath a live writer is not a repair.
+   *
+   * The daemon and the shadow loop both hold every row they have loaded in memory and write the
+   * file whole. `merged()` keeps the higher peak of the two copies at save time — deliberately,
+   * so a peak survives a crash — which means a correction that *lowers* a number is reverted
+   * within the minute, and an entry is reverted whenever the other process checked more
+   * recently. Some of the fix would land, some would vanish, and the output would say it all
+   * worked. That is the exact failure this whole file exists to catch, so it is not one this
+   * file is allowed to have.
+   *
+   * mtime is the signal, because a polling process rewrites the file every cycle whether or not
+   * anything changed about the coin.
+   */
+  const idleSec = (Date.now() - statSync(STORE).mtimeMs) / 1000;
+  if (idleSec < WRITER_IDLE_SEC && !process.argv.includes('--force')) {
+    console.log(
+      `\n  ✗ not writing — something else wrote data/tracked.json ${idleSec.toFixed(0)}s ago.\n\n` +
+        '    Stop the daemon (npm run dev) and any shadow loop first, then re-run. Both keep\n' +
+        '    the rows they hold in memory, so a repair made underneath them is partly reverted\n' +
+        '    and partly kept, with nothing to show which was which.\n\n' +
+        '    --force writes anyway, if you know the other writer holds none of these rows.\n',
+    );
+    process.exitCode = 1;
     return;
   }
 
@@ -181,4 +245,4 @@ async function main(): Promise<void> {
   console.log(`  ${changed} row(s) rewritten from the chart\n`);
 }
 
-void main();
+if (require.main === module) void main();
