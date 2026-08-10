@@ -47,6 +47,25 @@ describe('assess', () => {
     expect(codes(call({ marketCapUsd: 900_000, liquidityUsd: 900 }))).toEqual(['thin']);
   });
 
+  /**
+   * The ratio is a launch-shape heuristic: it decays as a token matures, so on a deep pool it
+   * reports age rather than whether anyone can get out. These are the real numbers for four of
+   * the largest markets on Solana, every one of which it called unbacked.
+   */
+  it.each([
+    ['BONK', 217_000_000, 517_000],
+    ['JUP', 615_000_000, 2_000_000],
+    ['JTO', 556_000_000, 2_000_000],
+    ['PYTH', 64_000_000, 448_000],
+  ])('does not call %s unbacked for having outgrown its pool', (_name, marketCapUsd, liquidityUsd) => {
+    expect(codes(call({ marketCapUsd, liquidityUsd }))).toEqual([]);
+  });
+
+  it('still asks the ratio where the pool is small enough for it to mean something', () => {
+    // Same 0.24% as BONK, on a pool a member could not exit. The share is not the point.
+    expect(codes(call({ marketCapUsd: 20_000_000, liquidityUsd: 48_000 }))).toEqual(['ratio']);
+  });
+
   it('separates plausible hype from a wash-traded chart', () => {
     const busy = assess(call({ marketCapUsd: 400_000, liquidityUsd: 40_000, volumeUsd: 1_600_000 }));
     expect(busy.level).toBe('caution');

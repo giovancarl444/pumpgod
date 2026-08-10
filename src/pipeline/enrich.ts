@@ -1,6 +1,6 @@
 import type { Chain, ParsedCall } from '../types';
 import { chainFromSlug } from '../parse/chains';
-import { aggregate, pairsForToken } from './dexscreener';
+import { aggregate, pairsForToken, tokenText } from './dexscreener';
 
 /**
  * Enrichment never gates a relayed call. We publish on what the source gave us and fold this
@@ -17,8 +17,8 @@ export async function enrich(call: ParsedCall, timeoutMs: number): Promise<Parti
   return {
     token: { ...call.token, chain },
     pairAddress: best.pairAddress ?? call.pairAddress,
-    name: best.baseToken?.name ?? call.name,
-    ticker: best.baseToken?.symbol?.toUpperCase() ?? call.ticker,
+    name: tokenText(best.baseToken?.name) ?? call.name,
+    ticker: tokenText(best.baseToken?.symbol)?.toUpperCase() ?? call.ticker,
     imageUrl: view.imageUrl ?? call.imageUrl,
     // The market's numbers replace the source's claim outright rather than filling gaps in
     // it — a stat the source got wrong is worse than one it never gave.

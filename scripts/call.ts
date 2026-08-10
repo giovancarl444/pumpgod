@@ -51,9 +51,12 @@ async function main() {
   console.log(photoNote(outcome.call.imageUrl, html, config.showImage));
 
   if (risk.level === 'danger') {
-    console.log('\n  🚨 the screen would HOLD THIS BACK — it goes to the war room, not the channel:');
+    // `/signal` publishes this — the command is the decision, and the screen marks the card
+    // rather than holding it. Saying "held back" here would describe the relay path instead
+    // of the one this preview is previewing.
+    console.log('\n  🚨 the screen objects, and /signal would publish it anyway with this on the card:');
     for (const f of risk.flags) console.log(`     ${f.level === 'danger' ? '🚨' : '⚠️'} ${f.detail}`);
-    console.log('\n  publishing it anyway is a decision, not a default.\n');
+    console.log('\n  a coin you type is a decision you made. Relayed, this one would be held back.\n');
     return;
   }
 

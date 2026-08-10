@@ -94,6 +94,16 @@ export function stillImage(url: string | undefined): string | undefined {
   }
 }
 
+/**
+ * A name or symbol as the deployer typed it, which is not always as it should be shown.
+ * Fartcoin's are `"Fartcoin "` on both fields, and untouched they render the title as
+ * `Fartcoin  | FARTCOIN ` and every reply about it as `$FARTCOIN `. Whitespace-only becomes
+ * absent, so the card falls back to whichever field is real rather than printing a gap.
+ */
+export function tokenText(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {
   const q = tokenAddress.toLowerCase();
   const own = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);

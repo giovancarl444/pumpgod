@@ -24,6 +24,15 @@ const DEAD_LIQUIDITY_USD = 500;
 const THIN_RATIO = 0.02;
 const SEVERE_RATIO = 0.008;
 
+/**
+ * Above this the ratio has stopped answering the question, so it is not asked. The share
+ * decays as a token matures, which makes it a statement about age rather than about exiting
+ * once the pool is deep in absolute terms: BONK, JUP, JTO and PYTH all sit under 0.8% while
+ * holding $450K to $2M of depth. A member selling $5k moves a pool this size by 2%, so
+ * whether they can get out is settled by the depth itself and the ratio only adds a scare.
+ */
+const RATIO_ONLY_BELOW_USD = 250_000;
+
 /** 24h turnover as a multiple of the pool. Genuine hype reaches this; wash farms blow past it. */
 const CHURN_CAUTION = 30;
 const CHURN_DANGER = 100;
@@ -58,9 +67,10 @@ export function assess(call: ParsedCall, claimedMcUsd?: number, marketChecked = 
     flags.push({ code: 'unknown-depth', detail: 'no liquidity reading — depth unknown', level: 'caution' });
   }
 
-  // Only meaningful once the pool is big enough for the ratio to say anything; a $2k pool is
-  // already flagged above and its ratio would just repeat the point.
-  if (mc !== undefined && liq !== undefined && liq >= THIN_LIQUIDITY_USD && mc > 0) {
+  // Bounded at both ends. A $2k pool is already flagged above and its ratio would only repeat
+  // the point; past `RATIO_ONLY_BELOW_USD` the depth answers the question on its own.
+  const ratioWorthAsking = liq !== undefined && liq >= THIN_LIQUIDITY_USD && liq < RATIO_ONLY_BELOW_USD;
+  if (mc !== undefined && liq !== undefined && ratioWorthAsking && mc > 0) {
     const ratio = liq / mc;
     if (ratio < SEVERE_RATIO) {
       flags.push({ code: 'ratio', detail: `liquidity is ${pct(ratio)} of mcap — price is unbacked`, level: 'danger' });

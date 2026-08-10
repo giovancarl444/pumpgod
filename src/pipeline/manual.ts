@@ -1,7 +1,7 @@
 import type { Chain, ParsedCall, Source, TokenRef } from '../types';
 import { classifyAddress, extractAddresses } from '../parse/addresses';
 import { CHAIN_KIND, chainFromSlug } from '../parse/chains';
-import { aggregate, pairsForToken, search, type TokenView } from './dexscreener';
+import { aggregate, pairsForToken, search, tokenText, type TokenView } from './dexscreener';
 
 /**
  * Our own calls are attributed like any other source, so `npm run scorecard` answers the
@@ -101,8 +101,8 @@ export async function resolveManualCall(
     call: {
       token,
       pairAddress: best.pairAddress,
-      name: best.baseToken?.name,
-      ticker: best.baseToken?.symbol?.toUpperCase(),
+      name: tokenText(best.baseToken?.name),
+      ticker: tokenText(best.baseToken?.symbol)?.toUpperCase(),
       stats,
       imageUrl: view.imageUrl,
       candidates: [token],

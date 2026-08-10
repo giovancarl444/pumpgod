@@ -130,7 +130,12 @@ export function renderPublicCall(signal: Signal, opts: RenderOptions): string {
 
   // Above the links, so a danger flag cannot be scrolled past on the way to Buy.
   const risk = riskLine(signal, false);
-  if (risk) lines.push('', risk, '');
+  if (risk) lines.push('', risk);
+
+  // The links are an action rather than another fact, so they are always set off from the
+  // stats. Carrying the gap on the risk line instead left the ordinary card — the one with
+  // nothing to flag, which is most of them — reading Buy as one more stat row.
+  lines.push('');
 
   const templates = { sol: opts.tradeUrlSol, evm: opts.tradeUrlEvm };
   const links = [`<a href="${dexScreenerUrl(token.chain, pairAddress, token.address)}">DexScreener</a>`];

@@ -90,6 +90,26 @@ describe('resolveManualCall', () => {
     expect(seen).toHaveLength(1);
   });
 
+  // Fartcoin's name and symbol are both `"Fartcoin "` on the live API, which renders the
+  // title as `Fartcoin  | FARTCOIN ` and every reply about it as `$FARTCOIN `.
+  it('takes the whitespace a deployer left in the name off the card', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name: 'Fartcoin ', symbol: 'Fartcoin ' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.name).toBe('Fartcoin');
+    expect(out.call.ticker).toBe('FARTCOIN');
+  });
+
+  it('treats a name that is only whitespace as absent, rather than printing a gap', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ baseToken: { address: TOKEN, name: '   ', symbol: 'BONK' } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.name).toBeUndefined();
+    expect(out.call.ticker).toBe('BONK');
+  });
+
   it('trusts an address a human typed out — nothing is more deliberate', async () => {
     dex([[`/tokens/${TOKEN}`, [pair()]]]);
     const out = await resolveManualCall(TOKEN, 2000);
