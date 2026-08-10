@@ -227,3 +227,30 @@ describe('resolveManualCall with a chain restriction', () => {
     expect((await resolveManualCall(TOKEN, 2000, [])).ok).toBe(true);
   });
 });
+
+// DexScreener serves a token's logo in whatever it was uploaded as. A coin whose profile is
+// an animated GIF comes back as megabytes of animation that Telegram will not take as a
+// photo — so the call publishes as plain text, having first paid to upload it.
+describe('the artwork URL we actually fetch', () => {
+  const CDN = 'https://cdn.dexscreener.com/cms/images/abc';
+
+  it('asks for a still frame instead of whatever the logo was uploaded as', async () => {
+    dex([[`/tokens/${TOKEN}`, [pair({ info: { imageUrl: `${CDN}?width=800&format=auto` } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.call.imageUrl).toContain('format=png');
+    expect(out.call.imageUrl).toContain('width=800');
+  });
+
+  it('leaves a plain image link alone, since it speaks no such query language', async () => {
+    const plain = 'https://dd.dexscreener.com/ds-data/tokens/solana/bonk.png';
+    dex([[`/tokens/${TOKEN}`, [pair({ info: { imageUrl: plain } })]]]);
+    const out = await resolveManualCall(TOKEN, 2000);
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.call.imageUrl).toBe(plain);
+  });
+});

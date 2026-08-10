@@ -71,8 +71,18 @@ describe('fetchImage', () => {
   });
 
   it('names the file by what was served, not by what the URL claimed', async () => {
-    vi.stubGlobal('fetch', async () => response(PNG, { type: 'image/webp' }));
-    expect((await fetchImage('https://cdn.example/coin.png', 500))?.name).toBe('coin.webp');
+    vi.stubGlobal('fetch', async () => response(PNG, { type: 'image/jpeg' }));
+    expect((await fetchImage('https://cdn.example/coin.png', 500))?.name).toBe('coin.jpg');
+  });
+
+  // Telegram takes a photo as JPEG or PNG. A GIF or WebP is a document to it, and the upload
+  // is refused only after the bytes are on the wire — on a coin whose logo is an animation
+  // that is megabytes spent to publish the call without the picture anyway.
+  it('refuses formats Telegram will not take as a photo, before uploading them', async () => {
+    for (const type of ['image/gif', 'image/webp']) {
+      vi.stubGlobal('fetch', async () => response(PNG, { type }));
+      expect(await fetchImage('https://cdn.example/coin.png', 500)).toBeUndefined();
+    }
   });
 });
 

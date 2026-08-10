@@ -71,6 +71,29 @@ export interface TokenView {
  * call. DexScreener caps the pool list, so a sum can still undercount; that direction is the
  * safe one, since undercounting liquidity holds a call back rather than publishing a rug.
  */
+/**
+ * Asks DexScreener's CDN for a still frame rather than whatever the logo was uploaded as.
+ *
+ * `format=auto` on a token whose profile is an animated GIF returns the animation — 3.2MB on
+ * the one that prompted this. Telegram does not accept a GIF or a WebP as a photo, so that
+ * call would spend seconds uploading bytes that were always going to be rejected and then
+ * publish as plain text. `format=png` returns the same image flattened, at 70KB.
+ *
+ * Only rewritten when the URL already speaks that query language; a plain `.png` link is left
+ * exactly as it is.
+ */
+export function stillImage(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.searchParams.has('format')) return url;
+    parsed.searchParams.set('format', 'png');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {
   const q = tokenAddress.toLowerCase();
   const own = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);
@@ -87,7 +110,7 @@ export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | u
     best,
     // Read across every pool rather than off `best`: the profile hangs off the token, but
     // DexScreener only attaches it to the pools it has indexed, which need not be the deepest.
-    imageUrl: own.map((p) => p.info?.imageUrl).find((url): url is string => Boolean(url)),
+    imageUrl: stillImage(own.map((p) => p.info?.imageUrl).find((url): url is string => Boolean(url))),
     stats: {
       marketCapUsd: best.marketCap ?? best.fdv,
       liquidityUsd,

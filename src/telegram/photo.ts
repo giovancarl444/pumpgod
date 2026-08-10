@@ -33,10 +33,12 @@ export async function fetchImage(url: string, timeoutMs: number): Promise<Fetche
     if (!res.ok) return undefined;
 
     const type = res.headers.get('content-type') ?? '';
-    // Anything else is a placeholder page or an error body, and uploading it would produce
-    // a broken post rather than a failed one.
-    if (!/^image\/(png|jpeg|jpg|webp|gif)/i.test(type)) {
-      log.debug(`image at ${url} was ${type || 'untyped'}, not an image`);
+    // JPEG and PNG are what Telegram takes as a photo. A GIF or a WebP is a document to it and
+    // the upload fails once the bytes are already on the wire — so those are refused here,
+    // where the cost is one missing image rather than seconds spent on a call to lose it
+    // anyway. Anything else is a placeholder page or an error body.
+    if (!/^image\/(png|jpeg)/i.test(type)) {
+      log.debug(`image at ${url} was ${type || 'untyped'}, which Telegram will not take as a photo`);
       return undefined;
     }
 
@@ -53,10 +55,7 @@ export async function fetchImage(url: string, timeoutMs: number): Promise<Fetche
 }
 
 function extensionFor(contentType: string): string {
-  if (/webp/i.test(contentType)) return 'webp';
-  if (/png/i.test(contentType)) return 'png';
-  if (/gif/i.test(contentType)) return 'gif';
-  return 'jpg';
+  return /png/i.test(contentType) ? 'png' : 'jpg';
 }
 
 /**
