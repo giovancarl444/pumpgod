@@ -73,24 +73,28 @@ call that already ran, and the public message is edited to say so.
 
 ```bash
 npm install
-cp .env.example .env
+npm run setup
 npm run doctor
+npm run dev          # then type /signal <address> in your channel
 ```
 
-`doctor` runs at any stage. On a blank `.env` it lists every value still needed at once, and
-proves the half of a call that needs no account — that DexScreener answers and artwork
-downloads — so the first thing you see is what already works.
+`setup` asks for the two things only you can get, logs in, and lets you pick the channel from
+a numbered list of the groups the account is actually in. It writes `.env` itself — the
+session string is never printed, and re-running fills in only what is still missing.
 
-1. **Get API credentials** at <https://my.telegram.org> → *API development tools*. Put
-   `TG_API_ID` and `TG_API_HASH` in `.env`. These are for a **user account**, not a bot —
-   a bot cannot read other people's groups, which is the entire first half of this.
-2. **Log in**: `npm run login`. Paste the resulting `TG_SESSION` into `.env`.
-   This string is a full credential for the account — treat it like a password. It is
-   gitignored; keep it that way.
-3. **Set destinations** in `.env`: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private
-   staging group). Run `npm run dialogs` to list the ids this account can see.
-4. **Check it**: `npm run doctor` again. Fix every ✗ before going any further.
-5. **Run**: `LIVE=true`, `npm run dev`, then type `/signal <address>` in your channel.
+It walks these four, which can equally be done by hand:
+
+1. **API credentials** from <https://my.telegram.org> → *API development tools* →
+   `TG_API_ID` and `TG_API_HASH`. These are for a **user account**, not a bot — a bot cannot
+   read other people's groups, which is the entire first half of this.
+2. **Log in.** Telegram sends a code to your phone. The resulting `TG_SESSION` is a full
+   credential for the account — treat it like a password. It is gitignored; keep it that way.
+3. **Destinations**: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private staging group).
+4. **`LIVE=true`** when you are ready to publish for real. It ships off.
+
+`doctor` runs at any stage, including before any of that: on a blank `.env` it names every
+value still needed at once and still proves the half of a call that needs no account — that
+DexScreener answers and artwork downloads — so the first run says what already works.
 
 That is a complete setup — you are calling your own coins. Relaying other groups is a
 separate half, and it needs two more steps:
@@ -238,6 +242,7 @@ double-post, it is recorded as a confirmation and shown as `2× confirmed`.
 ## Operating it
 
 ```bash
+npm run setup            # fill in .env: credentials, login, destinations
 npm run doctor           # prove the setup before a call depends on it
 npm run drill -- --into <chat>   # prove the engine relays a real call, end to end
 npm run dev              # run it
