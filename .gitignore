@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+config/sources.json
+data/
+*.session
+*.session-journal
+session.txt
