@@ -101,4 +101,8 @@ export interface Signal {
   timings: Timings;
   /** Sources that independently called this same token inside the dedupe window. */
   confirmations: string[];
+  /** How long ago the source posted it. Non-trivial only for recovered messages. */
+  ageSec: number;
+  /** Too old to auto-fire; must be reviewed by a human however the source is configured. */
+  stale: boolean;
 }

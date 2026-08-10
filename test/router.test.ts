@@ -24,11 +24,11 @@ function harness(overrides: Partial<AppConfig> = {}) {
     invoke: async (req: unknown) => {
       if (req instanceof Api.messages.SendMessage) {
         const id = ++nextId;
-        sent.push({ peer: req.peer, text: req.message, id });
+        sent.push({ peer: req.peer as Api.TypeInputPeer, text: req.message ?? '', id });
         return { updates: [new Api.UpdateMessageID({ id, randomId: helpers.generateRandomLong() })] };
       }
       if (req instanceof Api.messages.EditMessage) {
-        edits.push({ id: req.id, text: req.message });
+        edits.push({ id: req.id, text: req.message ?? '' });
         return { updates: [] };
       }
       return { updates: [] };
@@ -49,6 +49,8 @@ function harness(overrides: Partial<AppConfig> = {}) {
     enrichTimeoutMs: 100,
     footer: 'NFA · DYOR',
     metricsIntervalMs: 60_000,
+    maxCallAgeSec: 90,
+    catchupIntervalMs: 60_000,
     ...overrides,
   };
 
@@ -174,6 +176,30 @@ describe('Router', () => {
     router.handleMessage(incoming(source('auto'), 'gm what are we buying today'));
     await settle();
     expect(sent).toHaveLength(0);
+  });
+
+  it('a recovered call is too old to auto-fire and goes to review instead', async () => {
+    const { router, sent } = harness();
+    const old = incoming(source('auto'));
+    old.messageUnix = Math.floor(Date.now() / 1000) - 600;
+
+    router.handleMessage(old);
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.peer).toBe(WAR_ROOM);
+    expect(sent[0]!.text).toContain('NOT fresh');
+  });
+
+  it('still auto-fires a call that is merely a few seconds old', async () => {
+    const { router, sent } = harness();
+    const recent = incoming(source('auto'));
+    recent.messageUnix = Math.floor(Date.now() / 1000) - 5;
+
+    router.handleMessage(recent);
+    await settle();
+
+    expect(sent[0]!.peer).toBe(CHANNEL);
   });
 
   it('ignores a reaction on a message it never staged', async () => {

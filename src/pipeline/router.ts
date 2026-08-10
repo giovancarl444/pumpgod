@@ -51,6 +51,10 @@ export class Router {
 
     const { first, entry } = this.dedupe.check(call.token.chain, call.token.address, incoming.source.id);
 
+    // Telegram stamps messages in whole seconds, so this is coarse — but it only needs to
+    // separate "just now" from "recovered after an outage".
+    const ageSec = Math.max(0, Math.round(Date.now() / 1000 - incoming.messageUnix));
+
     const signal: Signal = {
       id: `${Date.now().toString(36)}-${(this.counter++).toString(36)}`,
       source: incoming.source,
@@ -59,6 +63,8 @@ export class Router {
       rawText: incoming.text,
       call,
       confirmations: entry.sources,
+      ageSec,
+      stale: ageSec > this.config.maxCallAgeSec,
       timings: {
         messageUnix: incoming.messageUnix,
         recvAt: incoming.recvAt,
@@ -79,9 +85,13 @@ export class Router {
       return;
     }
 
-    if (incoming.source.mode === 'auto') {
+    // A stale call is one we recovered after an outage, or one we were too slow to see.
+    // Publishing it as if it were fresh is how a call group loses trust, so it always
+    // goes to a human regardless of how the source is configured.
+    if (incoming.source.mode === 'auto' && !signal.stale) {
       void this.fire(signal);
     } else {
+      if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
       void this.stage(signal);
     }
   }

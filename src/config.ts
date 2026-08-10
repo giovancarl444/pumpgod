@@ -48,6 +48,8 @@ export interface AppConfig {
   enrichTimeoutMs: number;
   footer: string;
   metricsIntervalMs: number;
+  maxCallAgeSec: number;
+  catchupIntervalMs: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -64,6 +66,8 @@ export function loadConfig(): AppConfig {
     enrichTimeoutMs: num('ENRICH_TIMEOUT_MS', 2500),
     footer: process.env.FOOTER?.trim() ?? 'NFA · DYOR',
     metricsIntervalMs: num('METRICS_INTERVAL_SEC', 300) * 1000,
+    maxCallAgeSec: num('MAX_CALL_AGE_SEC', 90),
+    catchupIntervalMs: num('CATCHUP_INTERVAL_SEC', 60) * 1000,
   };
 }
 

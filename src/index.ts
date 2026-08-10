@@ -1,6 +1,7 @@
 import { loadConfig, loadSources, normalisePeerId } from './config';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { attachIngest } from './telegram/ingest';
+import { Catchup, type WatchedPeer } from './telegram/catchup';
 import { Router } from './pipeline/router';
 import { formatSnapshot } from './metrics/latency';
 import { journal } from './store/journal';
@@ -35,6 +36,7 @@ async function main() {
   // Resolving every source up front means the hot path is a single Map lookup on an id
   // we already hold, with no chance of a mid-call network resolution.
   const watched = new Map<string, Source>();
+  const peers = new Map<string, WatchedPeer>();
   for (const source of sources) {
     try {
       const peer = source.peerId
@@ -42,7 +44,9 @@ async function main() {
         : await resolveInputPeer(client, source.username!);
       const id = peerIdOf(peer);
       if (!id) throw new Error('unsupported peer type');
-      watched.set(normalisePeerId(id), source);
+      const key = normalisePeerId(id);
+      watched.set(key, source);
+      peers.set(key, { source, peer });
       log.info(`watching ${source.label} [${source.mode}] → ${id}`);
     } catch (err) {
       log.error(`could not resolve source "${source.id}": ${(err as Error).message}`);
@@ -52,11 +56,28 @@ async function main() {
   if (!watched.size) throw new Error('No sources could be resolved. Is this account a member of those groups?');
 
   const router = new Router(client, config, channelPeer, warRoomPeer);
+  const catchup = new Catchup(client);
+  catchup.load();
 
   attachIngest(client, watched, warRoomId, {
-    onMessage: (msg) => router.handleMessage(msg),
+    onMessage: (msg) => {
+      catchup.note(msg.chatId, msg.messageId);
+      router.handleMessage(msg);
+    },
     onReaction: (reaction) => router.handleReaction(reaction),
   });
+
+  // Anything that arrived while the socket was down is replayed here. Recovered calls are
+  // stale by definition, so the router sends them to review rather than publishing them.
+  const runCatchup = async () => {
+    try {
+      for (const missed of await catchup.sweep(peers)) router.handleMessage(missed);
+    } catch (err) {
+      log.warn(`catchup sweep failed: ${(err as Error).message}`);
+    }
+  };
+  await runCatchup();
+  const catchupTimer = setInterval(runCatchup, config.catchupIntervalMs);
 
   log.info(
     `pumpgod live · ${watched.size} sources · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`,
@@ -70,8 +91,11 @@ async function main() {
 
   const shutdown = async () => {
     clearInterval(metrics);
+    clearInterval(catchupTimer);
     log.info('shutting down');
     log.info(formatSnapshot());
+    // Persisting the cursors is what lets the next start recover the gap it left behind.
+    catchup.persist();
     journal.close();
     await client.disconnect();
     process.exit(0);

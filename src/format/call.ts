@@ -85,7 +85,9 @@ export function renderWarRoomCall(signal: Signal): string {
   const detectMs = signal.timings.parsedAt ? signal.timings.parsedAt - signal.timings.recvAt : undefined;
 
   const lines = [
-    `🔎 <b>${escapeHtml(signal.source.label)}</b> · ${signal.source.mode}`,
+    signal.stale
+      ? `⏳ <b>${escapeHtml(signal.source.label)}</b> · posted ${signal.ageSec}s ago, NOT fresh`
+      : `🔎 <b>${escapeHtml(signal.source.label)}</b> · ${signal.source.mode}`,
     '',
     heading(signal),
     `<code>${escapeHtml(token.address)}</code>`,

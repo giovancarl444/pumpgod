@@ -33,6 +33,21 @@ What that means in practice:
 The remaining latency is almost entirely distance to Telegram. If `npm run bench -- --network`
 shows p50 above ~120ms, the fix is hosting near a Telegram DC, not code.
 
+## Not missing calls
+
+A missed call is infinitely slow, so this gets the same attention as latency. MTProto
+delivers over a socket that can drop, and GramJS's own gap recovery does not guarantee every
+message in the gap is replayed.
+
+pumpgod tracks the last message id seen per source, persists it to `data/cursors.json`, and
+explicitly pulls anything newer every `CATCHUP_INTERVAL_SEC`. A restart resumes from where
+the last run stopped.
+
+Recovered calls are old by definition, and posting one as if it were fresh is how a call
+group loses trust — so **anything older than `MAX_CALL_AGE_SEC` (default 90s) never
+auto-fires**, whatever the source's mode. It goes to the war room labelled `NOT fresh` with
+its real age, and a human decides.
+
 ## Setup
 
 ```bash
