@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Copy to config/sources.json and edit. Run `npm run dialogs` to list the groups this",
+    "account can already read, then paste the ids here.",
+    "",
+    "mode:",
+    "  auto   - publish straight to the channel, no human step. Fastest, use only for sources you trust.",
+    "  review - post to the war room and wait for a 🚀 reaction before publishing.",
+    "  shadow - parse and journal only, never surface. Use this while evaluating a new source."
+  ],
+  "sources": [
+    {
+      "id": "soaps",
+      "label": "Soaps Gems",
+      "username": "soapsgems",
+      "mode": "shadow",
+      "enabled": true,
+      "notes": "Posts CA + DexScreener card. Watch hit rate for a week before promoting to review."
+    },
+    {
+      "id": "example-fast",
+      "label": "Example Fast Caller",
+      "peerId": "-1001234567890",
+      "mode": "review",
+      "enabled": false,
+      "minMarketCapUsd": 15000,
+      "maxMarketCapUsd": 2000000,
+      "chains": ["solana", "base"],
+      "notes": "Filters out anything already too big to move."
+    }
+  ]
+}
