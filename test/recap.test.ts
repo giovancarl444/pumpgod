@@ -191,6 +191,22 @@ describe('dailyRecap', () => {
     expect(dailyRecap([], new Date(), OPTS)).toBeUndefined();
   });
 
+  // A call we never got a price for is already counted in the denominator and can never be
+  // counted as a hit, so it lands as a loss. That errs against us, but silently — and a
+  // number nobody can account for is exactly what a sceptic goes looking for.
+  it('names the calls it has no price for instead of burying them in the misses', () => {
+    const calls = [call(), call({ address: 'b', athPriceUsd: undefined, entryPriceUsd: undefined })];
+    expect(summarise(calls).unpriced).toBe(1);
+
+    const text = dailyRecap(calls, new Date('2026-08-09'), OPTS)!;
+    expect(text).toContain('2 calls');
+    expect(text).toContain('1 with no price data');
+  });
+
+  it('keeps quiet about it when every call was priced', () => {
+    expect(dailyRecap([call()], new Date('2026-08-09'), OPTS)!).not.toContain('no price data');
+  });
+
   it('files it under the day it reports on, not the UTC day', () => {
     // The suite runs at TZ=Asia/Tokyo (see package.json) precisely so this is meaningful:
     // the window is local midnight to local midnight, so the key must be local too. Taken

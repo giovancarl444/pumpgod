@@ -20,7 +20,9 @@ function serve(body: string, status = 200) {
   return seen;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('reading a peak off the chart', () => {
   it('takes the highest candle in the window', async () => {

@@ -81,6 +81,12 @@ export interface DayStats {
   hit2x: number;
   hit5x: number;
   hit10x: number;
+  /**
+   * Calls we never got a price for. They count in `called` and can never count as a hit, so
+   * they read as losses unless they are named — which understates us, and quietly, which is
+   * the worse half. Anyone checking the arithmetic should be able to see where the gap went.
+   */
+  unpriced: number;
   /** `run` is the biggest milestone we actually timed, which is rarely the peak itself —
    *  so it has to carry its own multiple rather than borrow the peak's. */
   best?: { ticker: string; multiple: number; run?: { milestone: number; seconds: number } };
@@ -99,11 +105,14 @@ function timedRun(call: TrackedCall): { milestone: number; seconds: number } | u
 
 export function summarise(calls: TrackedCall[]): DayStats {
   const published = calls.filter(isPublished);
-  const stats: DayStats = { called: published.length, hit2x: 0, hit5x: 0, hit10x: 0 };
+  const stats: DayStats = { called: published.length, hit2x: 0, hit5x: 0, hit10x: 0, unpriced: 0 };
 
   for (const call of published) {
     const peak = peakMultiple(call);
-    if (peak === undefined) continue;
+    if (peak === undefined) {
+      stats.unpriced++;
+      continue;
+    }
     if (peak >= 2) stats.hit2x++;
     if (peak >= 5) stats.hit5x++;
     if (peak >= 10) stats.hit10x++;
@@ -136,6 +145,11 @@ export function dailyRecap(calls: TrackedCall[], day: Date, opts: RecapOptions):
     stats.hit10x && `${stats.hit10x} × 10x`,
   ].filter(Boolean) as string[];
   lines.push(hits.length ? hits.join(' · ') : 'none ran — that happens');
+
+  // Said out loud rather than absorbed into the misses. An unpriced call is a hole in our
+  // data, not a coin that failed, and totalling the two together is how a record starts
+  // meaning something slightly different from what it says.
+  if (stats.unpriced) lines.push(`${stats.unpriced} with no price data`);
 
   if (stats.best && stats.best.multiple >= 2) {
     // The time has to name the milestone it belongs to. "12.4x in 2m" reads as the peak
