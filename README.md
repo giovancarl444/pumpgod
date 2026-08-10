@@ -86,7 +86,24 @@ cp .env.example .env
 5. **Configure sources**: `cp config/sources.example.json config/sources.json` and edit.
 6. **Set destinations** in `.env`: `PUMPGOD_CHANNEL` (public) and `WAR_ROOM_CHAT` (private
    staging group).
-7. **Run**: `npm run dev`.
+7. **Check it**: `npm run doctor`. Fix every ✗ before going any further.
+8. **Run**: `npm run dev`.
+
+`doctor` exists because the interesting ways to get that wrong all fail **silently**. A group
+this account has been kicked from still resolves straight out of the entity cache, so no
+message ever arrives and nothing logs. A public channel we are not an admin of accepts the
+config happily and rejects the first real call. Reactions switched off in the war room leave
+review mode unable to approve anything, forever. Each one is otherwise discovered by losing a
+call, so they are proven up front instead:
+
+- the session is authorised, and says which account it is
+- every enabled source is resolved **and then actually read** — resolution lies, reading one
+  message is the only honest test of membership — with the age of its last post
+- post rights for both destinations, derived from the entity. Nothing is sent: a test message
+  flashed into the public channel is visible to members even when it is deleted a second later
+- the war room's reaction settings can carry a 🚀 approve and a 👎 skip
+
+It exits non-zero on anything blocking, so a supervisor can gate the process on it.
 
 `LIVE=false` is the default. Calls are parsed, staged and logged but never published, so
 you can watch it work for a day before it can embarrass you. Flip to `LIVE=true` when the
@@ -117,6 +134,7 @@ double-post, it is recorded as a confirmation and shown as `2× confirmed`.
 ## Operating it
 
 ```bash
+npm run doctor           # prove the setup before a call depends on it
 npm run dev              # run it
 npm run bench            # parser latency
 npm run bench -- --network   # add send round-trip (posts probes to the war room)
@@ -194,5 +212,5 @@ src/
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
   track/      outcome tracking — entry, peak, milestones, rugs
-scripts/      login, dialogs, bench, replay, scorecard
+scripts/      login, doctor, dialogs, bench, replay, scorecard
 ```

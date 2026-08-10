@@ -13,8 +13,8 @@ import { journal } from '../store/journal';
 import { Tracker } from '../track/tracker';
 import { log } from '../log';
 
-const FIRE = new Set(['🚀', '🔥', '⚡', '👍', '✅', '💎']);
-const SKIP = new Set(['👎', '❌', '🤡', '💩']);
+export const FIRE = new Set(['🚀', '🔥', '⚡', '👍', '✅', '💎']);
+export const SKIP = new Set(['👎', '❌', '🤡', '💩']);
 
 /** War-room cards expire so a stale reaction cannot fire a call from an hour ago. */
 const STAGE_TTL_MS = 30 * 60_000;

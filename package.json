@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "login": "tsx scripts/login.ts",
+    "doctor": "tsx scripts/doctor.ts",
     "dialogs": "tsx scripts/list-dialogs.ts",
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",
