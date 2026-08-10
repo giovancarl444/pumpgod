@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { parseCall, looksLikeCall } from '../src/parse';
 import { parseMoney } from '../src/parse/fields';
+import { dexScreenerUrl } from '../src/parse/chains';
+
+describe('dexScreenerUrl', () => {
+  it('links straight to the chart when we parsed a pool address', () => {
+    // Byte-identical to the chart link the source group posted in the sample message,
+    // which is where the format is confirmed from.
+    expect(dexScreenerUrl('robinhood', '0x3626904443af56d0dcd4069add190b8dbe0c3006', '0xa206')).toBe(
+      'https://dexscreener.com/robinhood/0x3626904443af56d0dcd4069add190b8dbe0c3006',
+    );
+  });
+
+  it('falls back to search rather than risk a 404', () => {
+    expect(dexScreenerUrl('base', undefined, '0xa206')).toContain('search?q=0xa206');
+    expect(dexScreenerUrl('unknown', '0xpair', '0xa206')).toContain('search?q=0xa206');
+  });
+});
 
 describe('parseMoney', () => {
   it('handles suffixes, commas and dollar signs', () => {

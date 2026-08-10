@@ -63,7 +63,7 @@ function riskLine(signal: Signal, verbose: boolean): string | undefined {
 function linkLine(signal: Signal): string {
   const { token, pairAddress } = signal.call;
   const links = [
-    `<a href="${dexScreenerUrl(pairAddress ?? token.address)}">Chart</a>`,
+    `<a href="${dexScreenerUrl(token.chain, pairAddress, token.address)}">Chart</a>`,
     `<a href="${tradeUrl(token.chain, token.address)}">Buy</a>`,
     `<a href="${explorerUrl(token.chain, token.address)}">Scan</a>`,
   ];

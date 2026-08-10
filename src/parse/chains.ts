@@ -67,8 +67,15 @@ export function explorerUrl(chain: Chain, address: string): string {
   return EXPLORERS[chain](address);
 }
 
-export function dexScreenerUrl(address: string): string {
-  return `https://dexscreener.com/search?q=${address}`;
+/**
+ * `dexscreener.com/{chain}/{pair}` is the canonical form — it is what their own API hands
+ * back as a pair's `url`. It loads the chart directly, where a search link costs the reader
+ * a results page and a second click. Falling back to search whenever the chain is unknown or
+ * no pool address was parsed, because a wrong direct link is a 404 and search always works.
+ */
+export function dexScreenerUrl(chain: Chain, pairAddress: string | undefined, tokenAddress: string): string {
+  if (pairAddress && chain !== 'unknown') return `https://dexscreener.com/${chain}/${pairAddress}`;
+  return `https://dexscreener.com/search?q=${tokenAddress}`;
 }
 
 /** Deep link into a trading bot/terminal, so the channel can act in one tap. */
