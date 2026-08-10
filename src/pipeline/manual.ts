@@ -13,6 +13,7 @@ export const MANUAL_SOURCE: Source = {
   label: 'PUMPGOD',
   mode: 'auto',
   enabled: true,
+  commanded: true,
 };
 
 export type ManualOutcome =

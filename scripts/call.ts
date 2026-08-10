@@ -29,7 +29,7 @@ async function main() {
     process.exit(1);
   }
 
-  const risk = assess(outcome.call);
+  const risk = assess(outcome.call, undefined, true);
   const signal: Signal = {
     id: 'preview',
     source: MANUAL_SOURCE,

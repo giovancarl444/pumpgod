@@ -51,7 +51,8 @@ interface Staged {
  * then. Every path out of `route` therefore names itself.
  */
 export type RouteDecision =
-  | { kind: 'publishing' }
+  /** `flagged` is set when the screen objected but the call went out regardless. */
+  | { kind: 'publishing'; flagged?: string }
   | { kind: 'review'; reason: string }
   | { kind: 'duplicate'; sources: string[] }
   | { kind: 'dropped'; reason: string };
@@ -158,7 +159,7 @@ export class Router {
       stale: ageSec > this.config.maxCallAgeSec,
       // Pure arithmetic on numbers we already hold — sub-microsecond, so it can gate the
       // publish. Re-read against real market data in `upgrade`.
-      risk: assess(call),
+      risk: assess(call, undefined, input.enriched),
       enriched: input.enriched,
       timings: {
         messageUnix: input.originUnix,
@@ -202,10 +203,18 @@ export class Router {
     // ordinary calls is how a call group loses trust. A stale call is one we recovered after
     // an outage or were too slow to see. A dangerous one is untradable — no exit liquidity,
     // an unbacked price, or a move that already happened. Neither is auto-published.
-    const divert = signal.stale || signal.risk.level === 'danger';
+    //
+    // Unless somebody typed the address. `/signal` exists so that discussing a coin and
+    // calling it are separate acts, which makes the command the decision — and asking for it
+    // twice is how an admin's call goes quiet instead of out, since the second confirmation
+    // lives in a war room that is optional and may not be there to hold it. The screen is
+    // not silenced: its flags ride on the card, and `flagged` carries them back to the admin.
+    const flagged = dangerDetail(signal);
+    const divert = (signal.stale || signal.risk.level === 'danger') && !source.commanded;
     if (source.mode === 'auto' && !divert) {
+      if (flagged) log.warn(`⚠️  publishing ${label(signal)} on command despite: ${flagged}`);
       void this.fire(signal);
-      return { kind: 'publishing' };
+      return { kind: 'publishing', flagged };
     }
 
     if (signal.stale) log.warn(`⏳ ${label(signal)} is ${signal.ageSec}s old — routing to review`);
@@ -299,7 +308,7 @@ export class Router {
 
     // The pre-publish screen only had the source's own numbers. This one has the market's,
     // and can compare the two — which is what catches a call that already ran.
-    enriched.risk = assess(enriched.call, signal.call.stats.marketCapUsd);
+    enriched.risk = assess(enriched.call, signal.call.stats.marketCapUsd, true);
     if (enriched.risk.level === 'danger') {
       log.warn(`⚠️  published ${label(signal)} then found: ${enriched.risk.flags.map((f) => f.detail).join('; ')}`);
     }
@@ -403,6 +412,12 @@ function label(signal: Signal): string {
  * admin is told the same thing the war-room card shows rather than a second paraphrase of it
  * that can drift.
  */
+/** What the screen objected to, in the words it would use to a human. */
+function dangerDetail(signal: Signal): string | undefined {
+  const details = signal.risk.flags.filter((f) => f.level === 'danger').map((f) => f.detail);
+  return details.length ? details.join('; ') : undefined;
+}
+
 function reviewReason(signal: Signal, source: Source): string {
   const reasons = signal.risk.flags.filter((f) => f.level === 'danger').map((f) => f.detail);
   if (signal.stale) reasons.push(`it is ${signal.ageSec}s old`);

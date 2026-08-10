@@ -76,4 +76,28 @@ describe('assess', () => {
   it('stays quiet when the source gave us no numbers to judge', () => {
     expect(assess(call({})).level).toBe('clear');
   });
+
+  /**
+   * DexScreener answers `liquidity: null` on a pool it holds no depth reading for, and every
+   * check above needs that number — so silence used to read as a clean bill of health on the
+   * token we knew least about. The card omits its liquidity line rather than printing a zero,
+   * so nothing else on it hinted at the gap either.
+   */
+  describe('a market that will not tell us the depth', () => {
+    it('does not call a token clear just because it could not be checked', () => {
+      const read = assess(call({ marketCapUsd: 3_253, volumeUsd: 121_469 }), undefined, true);
+      expect(read.level).toBe('caution');
+      expect(read.flags.map((f) => f.code)).toEqual(['unknown-depth']);
+    });
+
+    // Before enrichment we simply have not looked, which is a fact about us rather than the
+    // token. Flagging it there would mark every relayed call in the moment that matters most.
+    it('says nothing when we have not been to the market yet', () => {
+      expect(assess(call({ marketCapUsd: 3_253, volumeUsd: 121_469 })).level).toBe('clear');
+    });
+
+    it('leaves a real depth reading to the checks that already handle it', () => {
+      expect(codes(call({ marketCapUsd: 300_000, liquidityUsd: 60_000, volumeUsd: 120_000 }))).toEqual([]);
+    });
+  });
 });

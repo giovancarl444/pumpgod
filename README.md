@@ -60,9 +60,16 @@ it is published, for whether it can be *exited* — never for whether it will ru
 | `churn` | 24h volume far beyond what the pool can honestly support |
 | `late` | Market cap already ran past what the source quoted; you would be their exit |
 | `weak-parse` | The address came from a chart link, not a labelled `CA:` |
+| `unknown-depth` | The market reports no liquidity at all, so none of the checks above could run |
 
 A `danger` read is treated exactly like staleness: **it never auto-fires**, however the source
-is configured. It goes to the war room marked `HELD BACK` with the numbers spelled out.
+is configured. It goes to the war room marked `HELD BACK` with the numbers spelled out. The one
+exception is a coin you typed yourself — see [calling a coin yourself](#calling-a-coin-yourself).
+
+`unknown-depth` is there because DexScreener answers `liquidity: null` for a pool it holds no
+reading on, and every other liquidity check needs that number. Without it the screen returned a
+clean verdict on the token it knew least about — and the card omits its liquidity line rather
+than printing a zero, so nothing anywhere said the depth had not been checked.
 
 This is free. The whole screen is arithmetic on numbers already in hand — about **40ns**,
 against a 7µs parse and a 40–200ms network hop — so it costs nothing that speed would miss. It
@@ -192,8 +199,16 @@ indistinguishable from a coin with no logo. If it cannot be had — no artwork i
 CDN, an aspect ratio Telegram refuses — the call still goes out as text. A call posted
 without a picture is a call; a call not posted because a CDN was slow is a miss.
 
+**The screen advises a typed call rather than vetoing it.** Everywhere else a `danger` read
+diverts the coin to the war room for a second look. Here it does not: `/signal` exists so that
+discussing a coin and calling it are separate acts, which makes the command itself the
+decision — and asking for that decision twice is how an admin's call goes quiet instead of
+out, since the war room holding the second half is optional and may not be there at all. The
+screen is not silenced. Its flag rides on the published card where the readers buying the coin
+can see it, and the war room, if you have one, is told what was published over.
+
 Whatever happens, you get told. Every outcome answers back in the war room — published,
-held back by the screen and why, already called, or refused for its chain. Silence would be
+published despite a flag, already called, or refused for its chain. Silence would be
 indistinguishable from a dead bot, and the command has already deleted itself by then.
 
 To see what a call will look like without posting it — and without a Telegram account:

@@ -35,8 +35,12 @@ const LATE_MULTIPLE = 3;
  * `claimedMcUsd` is the market cap the source quoted. Passing it enables the lateness check,
  * which is the risk specific to relaying: the number being stale when they posted means the
  * move already happened.
+ *
+ * `marketChecked` says we have already been to the market for this call. It changes only what
+ * silence means — a token the market reports no depth for is a different thing from one we
+ * have not looked up yet, and only the first is worth saying anything about.
  */
-export function assess(call: ParsedCall, claimedMcUsd?: number): RiskRead {
+export function assess(call: ParsedCall, claimedMcUsd?: number, marketChecked = false): RiskRead {
   const flags: RiskFlag[] = [];
   const { marketCapUsd: mc, liquidityUsd: liq, volumeUsd: vol } = call.stats;
 
@@ -46,6 +50,12 @@ export function assess(call: ParsedCall, claimedMcUsd?: number): RiskRead {
     } else if (liq < THIN_LIQUIDITY_USD) {
       flags.push({ code: 'thin', detail: `liquidity ${usd(liq)} — cannot exit size`, level: 'danger' });
     }
+  } else if (marketChecked) {
+    // DexScreener answers `liquidity: null` for a pool it has no depth reading on, and every
+    // check below needs that number — so without this the screen returns a clean verdict on
+    // the token it knows least about, and the card omits its liquidity line rather than
+    // showing a zero, so nothing anywhere says we could not check. Unknown is not clear.
+    flags.push({ code: 'unknown-depth', detail: 'no liquidity reading — depth unknown', level: 'caution' });
   }
 
   // Only meaningful once the pool is big enough for the ratio to say anything; a $2k pool is

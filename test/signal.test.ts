@@ -274,18 +274,45 @@ describe('/signal, from the update to the channel', () => {
     expect(seen).toHaveLength(0);
   });
 
-  // Held back by the screen rather than refused. The coin is real, so the war room gets a card
-  // to react to — but the admin has to be told that is where it went.
-  it('reports a call the screen held back instead of publishing it', async () => {
+  // An admin who typed the address has already decided, so the screen marks the card rather
+  // than swallowing the call. The warning it raises is repeated in the war room and nowhere
+  // else — members can read the flag on the card itself.
+  it('publishes a coin the screen objects to, marking the card and telling the war room', async () => {
     net({ pairs: [pair({ liquidity: { usd: 900 } })] });
     const { type, log } = bot();
     await type(`/signal ${TOKEN}`);
 
-    expect(log.sent.filter((s) => s.peer === CHANNEL)).toHaveLength(0);
-    expect(log.sent.some((s) => s.text.includes('cannot exit size'))).toBe(true);
-    // Both halves have to arrive: the reason, and a card there is something to react to.
-    expect(log.sent.some((s) => s.text.includes('was held back'))).toBe(true);
-    expect(log.sent.some((s) => s.text.includes('🚀 fire · 👎 skip'))).toBe(true);
+    const card = log.sent.find((s) => s.peer === CHANNEL);
+    expect(card?.text).toContain('cannot exit size');
+
+    const warning = log.sent.find((s) => s.peer === WAR_ROOM);
+    expect(warning?.text).toContain('published anyway');
+    expect(warning?.text).toContain('cannot exit size');
+  });
+
+  // The whole point of the exemption: it must not need a war room to work.
+  it('publishes a flagged coin with no war room configured at all', async () => {
+    net({ pairs: [pair({ liquidity: { usd: 900 } })] });
+    const { type, log } = bot({ warRoom: undefined });
+    await type(`/signal ${TOKEN}`);
+
+    expect(log.sent).toHaveLength(1);
+    expect(log.sent[0]!.peer).toBe(CHANNEL);
+    expect(log.sent[0]!.text).toContain('cannot exit size');
+  });
+
+  // DexScreener answers `liquidity: null` on a pool it has no depth reading for. Every
+  // liquidity check needs that number, so the screen used to return a clean verdict on the
+  // token it knew least about — and the card drops its liquidity line rather than showing a
+  // zero, leaving nothing anywhere to say we could not check.
+  it('marks a coin whose depth the market will not report, rather than calling it clear', async () => {
+    net({ pairs: [pair({ liquidity: null })] });
+    const { type, log } = bot();
+    await type(`/signal ${TOKEN}`);
+
+    const card = log.sent.find((s) => s.peer === CHANNEL);
+    expect(card?.text).toContain('depth unknown');
+    expect(card?.text).not.toContain('💧 Liquidity');
   });
 
   it('does not publish when LIVE is false, and says that is why', async () => {

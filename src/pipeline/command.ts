@@ -74,6 +74,13 @@ export function createCommandHandler(deps: CommandDeps): (cmd: IncomingCommand) 
     switch (decision.kind) {
       case 'publishing':
         if (!config.live) await say(`🔇 LIVE=false — ${ticker} was not published.`, cmd);
+        // The card carries the flag itself, so repeating it is only worth doing somewhere
+        // private — saying it in the channel would tell members what they can already read.
+        else if (decision.flagged && warRoomPeer) {
+          await sendFast(client, warRoomPeer, `🚨 ${ticker} published anyway — ${escapeHtml(decision.flagged)}`, {
+            stage: 'send.warroom',
+          }).catch(() => undefined);
+        }
         break;
       case 'review':
         await say(

@@ -421,13 +421,37 @@ describe('Router', () => {
     vi.unstubAllGlobals();
   });
 
-  it('holds back a coin we call ourselves if it cannot be exited', async () => {
+  // Typing `/signal` is the decision. Diverting it asks for that same decision a second time,
+  // and the second half lives in a war room that is optional — so the screen advises on a
+  // coin we typed rather than vetoing it. The flag still has to reach the card, or advising
+  // amounts to keeping quiet.
+  it('calls a coin we typed even when the screen objects, and says so on the card', async () => {
     const { router, sent } = harness();
     router.callManual(
       manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }),
       'call x',
       performance.now(),
     );
+    await settle();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.peer).toBe(CHANNEL);
+    expect(sent[0]!.text).toContain('unbacked');
+  });
+
+  // Nobody typed this one, so nobody decided. A relayed call still gets the full veto.
+  it('still holds back a relayed coin that cannot be exited', async () => {
+    const { router, sent } = harness();
+    router.route({
+      source: { id: 'rival', label: 'Rival', mode: 'auto', enabled: true },
+      call: manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }),
+      chatId: 'rival',
+      messageId: 1,
+      rawText: 'wif',
+      originUnix: Math.floor(Date.now() / 1000),
+      recvAt: performance.now(),
+      parsedAt: performance.now(),
+    });
     await settle();
 
     expect(sent).toHaveLength(1);
@@ -455,7 +479,8 @@ describe('Router', () => {
       await settle();
     });
 
-    it('names the screen flag that held the coin back', async () => {
+    // Publishing over the screen's objection is only defensible if the admin hears about it.
+    it('names the screen flag it published over', async () => {
       const { router } = harness();
       const out = router.callManual(
         manualCall({ marketCapUsd: 2_000_000, liquidityUsd: 9_000 }),
@@ -464,9 +489,9 @@ describe('Router', () => {
       );
       await settle();
 
-      expect(out.kind).toBe('review');
-      if (out.kind !== 'review') return;
-      expect(out.reason).toContain('unbacked');
+      expect(out.kind).toBe('publishing');
+      if (out.kind !== 'publishing') return;
+      expect(out.flagged).toContain('unbacked');
     });
 
     it('says which chain it refused, rather than dropping the coin quietly', async () => {

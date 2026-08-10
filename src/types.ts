@@ -54,7 +54,7 @@ export interface ParsedCall {
 export type RiskLevel = 'clear' | 'caution' | 'danger';
 
 export interface RiskFlag {
-  code: 'dead' | 'thin' | 'ratio' | 'churn' | 'late' | 'weak-parse';
+  code: 'dead' | 'thin' | 'ratio' | 'churn' | 'late' | 'weak-parse' | 'unknown-depth';
   /** Rendered to a human who has about a second to decide, so it states the number. */
   detail: string;
   level: 'caution' | 'danger';
@@ -92,6 +92,11 @@ export interface Source {
   /** Drop messages matching any of these (case-insensitive substrings). */
   mute?: string[];
   notes?: string;
+  /**
+   * A person typed this address at us, rather than us lifting it out of somebody's message.
+   * Only `/signal` sets it, and it exempts the call from the screen's veto — see `route`.
+   */
+  commanded?: boolean;
 }
 
 /** Timestamps in ms from `performance.now()`, plus wall-clock for the journal. */
