@@ -22,6 +22,8 @@ interface BotMessage {
   from?: { id: number };
   text?: string;
   caption?: string;
+  /** Present only in a group with Topics on, and only outside General. */
+  message_thread_id?: number;
 }
 
 export interface BotIngestHandlers {
@@ -109,6 +111,15 @@ export function startBotIngest(
       const chatId = String(message.chat.id);
       if (!text) return;
       if (chatId !== warRoomId && chatId !== channelId) return;
+
+      // The only way to read a topic's id off Telegram at all. There is no method that lists
+      // them, and the id is not the number in a copied message link, so without this the
+      // setting can only be arrived at by guessing and watching where the card lands.
+      log.info(
+        `command from chat ${chatId} · ${
+          message.message_thread_id ? `topic ${message.message_thread_id}` : 'General (no topic)'
+        }`,
+      );
 
       handlers.onCommand({
         text,
