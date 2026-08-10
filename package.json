@@ -20,6 +20,7 @@
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",
     "recap": "tsx scripts/recap.ts",
+    "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
     "scoreboard": "tsx scripts/scoreboard.ts",
     "leaderboard": "tsx scripts/leaderboard.ts"

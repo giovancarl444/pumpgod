@@ -306,7 +306,49 @@ describe('resolveManualCall', () => {
     if (!out.ok) throw new Error(out.reason);
     expect(out.call.stats.liquidityUsd).toBe(90_000);
     expect(out.call.stats.volumeUsd).toBe(20_000);
-    // The deepest pool is still what gets linked, since that is what a buyer trades against.
+    // The busiest pool is what gets linked, since that is what a buyer meets.
+    expect(out.call.pairAddress).toBe(POOL);
+  });
+
+  it('ignores a pool that claims enormous depth but nobody trades in', async () => {
+    // Real numbers, from the coin that exposed this. A Meteora pool advertised $1.07bn of
+    // liquidity and a $1.43bn market cap for PARKIFY off a single trade in 24h, while the
+    // pumpswap pool holding $35k did fourteen thousand. Ranking on depth took the fiction —
+    // and the market cap rides along on the chosen pool, so the card would have published a
+    // $225k coin at $1.4bn.
+    dex([
+      [
+        `/tokens/${TOKEN}`,
+        [
+          pair({ pairAddress: 'ghost', liquidity: { usd: 1_073_381_662 }, volume: { h24: 38 }, marketCap: 1_431_035_025 }),
+          pair({ liquidity: { usd: 35_449 }, volume: { h24: 936_102 }, marketCap: 225_083 }),
+        ],
+      ],
+    ]);
+
+    const out = await resolveManualCall(TOKEN, 2000);
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.call.pairAddress).toBe(POOL);
+    expect(out.call.stats.marketCapUsd).toBe(225_083);
+    // And it is kept out of the summed liquidity as well, which the risk screen reads. Left
+    // in, a coin with $35k of real depth clears any floor we could put in front of it.
+    expect(out.call.stats.liquidityUsd).toBe(35_449);
+  });
+
+  it('falls back to depth when nothing has traded anywhere yet', async () => {
+    // A coin minutes old has no volume in any pool, and depth is the only evidence there is.
+    dex([
+      [
+        `/tokens/${TOKEN}`,
+        [
+          pair({ pairAddress: 'shallow', liquidity: { usd: 1_000 }, volume: { h24: 0 } }),
+          pair({ liquidity: { usd: 9_000 }, volume: { h24: 0 } }),
+        ],
+      ],
+    ]);
+
+    const out = await resolveManualCall(TOKEN, 2000);
+    if (!out.ok) throw new Error(out.reason);
     expect(out.call.pairAddress).toBe(POOL);
   });
 

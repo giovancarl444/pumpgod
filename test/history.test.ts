@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { peakSince } from '../src/pipeline/history';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pacing, peakSince, priceAt } from '../src/pipeline/history';
+import { log } from '../src/log';
 
 const T0 = 1_700_000_000_000;
 const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9';
@@ -20,8 +21,58 @@ function serve(body: string, status = 200) {
   return seen;
 }
 
+// The real queue leaves seconds between requests to stay inside the free tier. Nothing here
+// reaches the network, so waiting for it would only make the suite slow.
+beforeEach(() => {
+  pacing.gapMs = 0;
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+/**
+ * The rate limit is the one failure on this path that does not look like a failure.
+ *
+ * A refused request returns undefined, which is indistinguishable from a coin with no history,
+ * and the caller falls back to whatever price we can see right now — the exact number the
+ * chart lookup exists to keep out of the record. The first full watchlist pass priced 9% of
+ * calls off the chart and 91% off our own clock, and reported success the whole way.
+ */
+describe('being refused by the free tier', () => {
+  it('retries a 429 rather than reporting no history', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', async () => {
+      n += 1;
+      if (n === 1) return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { attributes: { ohlcv_list: [[T0 / 1000, 1, 1, 1, 0.5, 1]] } } }),
+      };
+    });
+
+    expect(await priceAt('solana', POOL, T0 + 60_000)).toBe(0.5);
+    expect(n).toBe(2);
+  });
+
+  it('gives up loudly rather than silently, once retries are spent', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    let n = 0;
+    vi.stubGlobal('fetch', async () => {
+      n += 1;
+      return { ok: false, status: 429, json: async () => ({}) };
+    });
+
+    expect(await priceAt('solana', POOL, T0)).toBeUndefined();
+    // Four attempts, not one: a single refusal must not be mistaken for an absent chart.
+    expect(n).toBe(4);
+    // And it says so. Falling back to the live price is a real cost to the measurement, so it
+    // is not allowed to happen quietly — that silence is what hid the problem the first time.
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toMatch(/rate limited/i);
+    warn.mockRestore();
+  });
 });
 
 describe('reading a peak off the chart', () => {

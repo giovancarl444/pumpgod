@@ -90,6 +90,42 @@ export interface TrackedCall {
   postThreadId?: number;
   /** The peak was confirmed against the chart rather than left as whatever we sampled. */
   athFromChart?: boolean;
+  /**
+   * The entry was read back off the chart at `calledAt`, rather than being the first price we
+   * happened to see.
+   *
+   * Only ever set on a call we found late — one scraped from another group's public feed. It
+   * is the flag that separates "this is what they got" from "this is what we saw when we got
+   * round to looking", and the scorecard is entitled to throw out any measurement that lacks
+   * it rather than quietly ranking a group on our own polling delay.
+   */
+  entryFromChart?: boolean;
+}
+
+/**
+ * Numbers known at the moment a call is recorded, for calls that did not happen just now.
+ *
+ * The live path needs none of this: it hears a call as it is made, so "now" is the call time
+ * and the first quote is the entry. A call lifted out of somebody else's feed an hour after
+ * they posted it has neither, and inventing them would make a rival's score a function of our
+ * scrape interval. Every field here is therefore a fact recovered from a source outside this
+ * process — Telegram's own timestamp, or the chart.
+ */
+export interface TrackSeed {
+  /** When the call was actually made. Their clock, never ours. */
+  calledAt?: number;
+  /** The price at `calledAt`, off the chart. */
+  entryPriceUsd?: number;
+  entryMcUsd?: number;
+  /**
+   * The pool, resolved up front rather than on the first poll.
+   *
+   * Load-bearing for a backfilled call: one already older than the tracking window retires on
+   * the very first pass, before any poll has run, and `settle` needs a pool to read the peak
+   * from. Without this such a call would be stored with no numbers at all.
+   */
+  poolAddress?: string;
+  entryFromChart?: boolean;
 }
 
 /** Identity of the coin itself. EVM addresses are case-insensitive; Solana's are not. */
@@ -178,8 +214,15 @@ export class Tracker {
     }
   }
 
-  /** Called from the router. Cheap and synchronous — the first price fetch is deferred. */
-  track(signal: Signal, outcome: Outcome): TrackedCall {
+  /**
+   * Called from the router. Cheap and synchronous — the first price fetch is deferred.
+   *
+   * `seed` is for calls that did not happen just now: it is how a rival's post from an hour ago
+   * gets their timestamp and their entry rather than ours. It applies only when the record is
+   * created, for the same reason the existing-record branch below keeps the original entry —
+   * the first thing we learned about a call is the thing that was true when it was made.
+   */
+  track(signal: Signal, outcome: Outcome, seed?: TrackSeed): TrackedCall {
     const k = key(signal.source.id, signal.call.token.chain, signal.call.token.address);
 
     // A call typically arrives as `staged` and is promoted to `called` on approval. Keep
@@ -209,11 +252,13 @@ export class Tracker {
       address: signal.call.token.address,
       ticker: signal.call.ticker,
       name: signal.call.name,
-      calledAt: Date.now(),
+      calledAt: seed?.calledAt ?? Date.now(),
       risk: signal.risk.level,
       riskFlags: signal.risk.flags.map((f) => f.code),
-      entryMcUsd: signal.call.stats.marketCapUsd,
-      entryPriceUsd: signal.call.stats.priceUsd,
+      entryMcUsd: seed?.entryMcUsd ?? signal.call.stats.marketCapUsd,
+      entryPriceUsd: seed?.entryPriceUsd ?? signal.call.stats.priceUsd,
+      poolAddress: seed?.poolAddress,
+      entryFromChart: seed?.entryFromChart,
     };
     this.calls.set(k, created);
     this.dirty = true;
@@ -379,12 +424,60 @@ export class Tracker {
     return [...this.calls.values()];
   }
 
+  /**
+   * What we hold, folded together with what is already on disk.
+   *
+   * Two processes write this file. The daemon prices calls every minute; `npm run shadow`
+   * records what rival channels called. Each holds its own `Tracker` over the same path and
+   * each writes the file whole, so without this the one that saved last replaced the other's
+   * rows outright — and a row destroyed that way can be unrecoverable, because a peak only
+   * exists to be measured while it is happening.
+   *
+   * Collisions are not a worry: a key is `sourceId + chain + address`, and the two processes
+   * write disjoint sources (`tg:*` for scraped channels, ours for ours). So a key on both
+   * sides is one record seen twice, and the copy checked more recently holds the newer price.
+   * The peak is taken as the larger of the two either way, since it is a running maximum and
+   * the one number here that cannot be recovered by looking again.
+   *
+   * Nothing in this class ever deletes a record, so folding disk back in cannot resurrect
+   * something that was meant to be gone.
+   */
+  private merged(): TrackedCall[] {
+    let onDisk: TrackedCall[] = [];
+    try {
+      if (existsSync(this.store)) onDisk = JSON.parse(readFileSync(this.store, 'utf8')) as TrackedCall[];
+    } catch (err) {
+      // An unreadable file is not a reason to drop what we are holding.
+      log.warn(`could not re-read tracked calls before saving: ${(err as Error).message}`);
+      return this.list();
+    }
+
+    const out = new Map(this.calls);
+    for (const theirs of onDisk) {
+      const k = key(theirs.sourceId, theirs.chain, theirs.address);
+      const ours = out.get(k);
+      if (!ours) {
+        out.set(k, theirs);
+        continue;
+      }
+      const fresher = (theirs.lastCheckedAt ?? 0) > (ours.lastCheckedAt ?? 0) ? theirs : ours;
+      const higher = (theirs.athPriceUsd ?? 0) > (ours.athPriceUsd ?? 0) ? theirs : ours;
+      out.set(
+        k,
+        higher === fresher
+          ? fresher
+          : { ...fresher, athPriceUsd: higher.athPriceUsd, athMcUsd: higher.athMcUsd, athAt: higher.athAt },
+      );
+    }
+    return [...out.values()];
+  }
+
   persist(): void {
     if (!this.dirty) return;
     this.dirty = false;
     try {
       mkdirSync(dirname(this.store), { recursive: true });
-      writeFileSync(this.store, JSON.stringify(this.list(), null, 2));
+      writeFileSync(this.store, JSON.stringify(this.merged(), null, 2));
     } catch (err) {
       log.warn(`could not persist tracked calls: ${(err as Error).message}`);
     }

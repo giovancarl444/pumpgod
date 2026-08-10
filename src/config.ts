@@ -8,6 +8,7 @@ loadEnv();
 
 const ROOT = resolve(__dirname, '..');
 const SOURCES_PATH = resolve(ROOT, 'config/sources.json');
+const WATCHLIST_PATH = resolve(ROOT, 'config/watchlist.json');
 
 function required(key: string): string {
   const v = process.env[key]?.trim();
@@ -317,4 +318,40 @@ export function loadSources(): Source[] {
   });
 }
 
-export { SOURCES_PATH, ROOT };
+/**
+ * The channels the scraper measures, as bare public @handles.
+ *
+ * A flat list of strings and nothing else, which is the point. `config/sources.json` carries a
+ * mode per source because those are read over a logged-in account and can be promoted to
+ * publishing; nothing read from a public web preview ever can, so there is no field here to set
+ * wrongly. A handle on this list gets measured. That is the only thing being on it can mean.
+ *
+ * Gitignored, like `sources.json`, for the same two reasons: the repo is public, and which
+ * groups we rate worth watching is the one piece of our homework a competitor would actually
+ * want.
+ */
+export function loadWatchlist(path = WATCHLIST_PATH): string[] {
+  if (!existsSync(path)) return [];
+
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  const raw = Array.isArray(parsed) ? parsed : (parsed as { handles?: unknown }).handles;
+  if (!Array.isArray(raw)) {
+    throw new Error(`${path} must be a JSON array of @handles, or an object with a "handles" array.`);
+  }
+
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    // Whole t.me links are what you get from copying a channel out of Telegram, so they are
+    // accepted rather than rejected with a message about formatting.
+    const handle = entry
+      .trim()
+      .replace(/^https?:\/\/(?:t\.me|telegram\.me)\/(?:s\/)?/i, '')
+      .replace(/^@/, '')
+      .replace(/[/?#].*$/, '');
+    if (/^[A-Za-z0-9_]{4,32}$/.test(handle)) seen.add(handle);
+  }
+  return [...seen];
+}
+
+export { SOURCES_PATH, WATCHLIST_PATH, ROOT };
