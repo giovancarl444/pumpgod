@@ -77,7 +77,7 @@ async function login(rl: Interface): Promise<void> {
   await client.disconnect();
 }
 
-interface Destination {
+export interface Destination {
   title: string;
   id: string;
   username?: string;
@@ -136,7 +136,7 @@ function peerRef(row: Destination): string {
   return row.username ? `@${row.username}` : row.id;
 }
 
-interface WatchedSource {
+export interface WatchedSource {
   id: string;
   label: string;
   username?: string;
@@ -247,36 +247,23 @@ async function chooseSources(rl: Interface, rows: Destination[]): Promise<void> 
     return;
   }
 
-  const watched = new Set(
-    existing.flatMap((s) => [s.peerId, s.username?.replace(/^@/, '').toLowerCase()].filter(Boolean) as string[]),
-  );
-  const already = (row: Destination) =>
-    watched.has(row.id) || (!!row.username && watched.has(row.username.toLowerCase()));
-
-  const candidates = rows.filter((row) => !isOurs(row));
+  const candidates = watchable(rows, [process.env.PUMPGOD_CHANNEL, process.env.WAR_ROOM_CHAT]);
   if (!candidates.length) return;
 
+  const refs = watchedRefs(existing);
   console.log('\n  Which groups should we watch? Nothing is ever published from these — they');
   console.log('  are parsed and scored, so you can see who is actually worth relaying.\n');
   candidates.forEach((row, i) => {
     const kind = row.broadcast ? 'channel' : 'group';
-    console.log(`  ${String(i + 1).padStart(3)}. ${row.title.padEnd(42)} ${kind.padEnd(8)} ${already(row) ? 'watching' : ''}`);
+    const mark = isWatched(row, refs) ? 'watching' : '';
+    console.log(`  ${String(i + 1).padStart(3)}. ${row.title.padEnd(42)} ${kind.padEnd(8)} ${mark}`);
   });
 
   const answer = (await rl.question('\n  Numbers, comma-separated (or enter to skip): ')).trim();
   if (!answer) return;
 
-  const taken = new Set(existing.map((s) => s.id));
-  const added = candidates
-    .filter((_, i) => parseChoices(answer, candidates.length).includes(i))
-    .filter((row) => !already(row))
-    .map((row): WatchedSource => ({
-      id: idFor(row, taken),
-      label: row.title,
-      ...(row.username ? { username: row.username } : { peerId: row.id }),
-      mode: 'shadow',
-      enabled: true,
-    }));
+  const picked = parseChoices(answer, candidates.length).map((i) => candidates[i]!);
+  const added = additions(picked, existing);
 
   if (!added.length) {
     console.log('  nothing new to add.\n');
@@ -373,7 +360,9 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error(`\n  ✗ setup could not finish: ${(err as Error).message}\n`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`\n  ✗ setup could not finish: ${(err as Error).message}\n`);
+    process.exit(1);
+  });
+}
