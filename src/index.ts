@@ -1,4 +1,5 @@
-import { loadConfig, loadSources, normalisePeerId } from './config';
+import { loadConfig, loadSocial, loadSources, normalisePeerId } from './config';
+import { Poster } from './social/poster';
 import { createClient, primeEntityCache, resolveInputPeer, peerIdOf } from './telegram/client';
 import { attachIngest } from './telegram/ingest';
 import { Catchup, type WatchedPeer } from './telegram/catchup';
@@ -111,6 +112,20 @@ async function main() {
   await runCatchup();
   const catchupTimer = setInterval(runCatchup, config.catchupIntervalMs);
 
+  // Growth runs off the tracker rather than the call path: a call is worth posting about
+  // once it has *done* something, which is minutes to hours after it was published.
+  const social = loadSocial();
+  const poster = new Poster({ ...social, dailyRecap: social.dailyRecap });
+  poster.load();
+
+  let socialTimer: NodeJS.Timeout | undefined;
+  if (poster.enabled && config.live) {
+    socialTimer = setInterval(() => void poster.run(Tracker.read()), social.postIntervalMs);
+    log.info(`𝕏 recap feed on · posting calls that reach ${social.minMultiple}x`);
+  } else if (poster.enabled) {
+    log.warn('𝕏 credentials set but LIVE=false — nothing will be posted. Preview with `npm run recap`.');
+  }
+
   log.info(
     `pumpgod live · ${watched.size} sources · publishing ${config.live ? 'ENABLED' : 'DISABLED (LIVE=false)'}`,
   );
@@ -124,6 +139,7 @@ async function main() {
   const shutdown = async () => {
     clearInterval(metrics);
     clearInterval(catchupTimer);
+    if (socialTimer) clearInterval(socialTimer);
     log.info('shutting down');
     log.info(formatSnapshot());
     // Persisting the cursors is what lets the next start recover the gap it left behind.

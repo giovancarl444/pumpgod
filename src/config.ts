@@ -79,6 +79,25 @@ export function loadPresentation(): PresentationConfig {
   };
 }
 
+/** Growth settings. Separate from AppConfig because the recap feed reads `data/tracked.json`
+ *  and needs no Telegram session to decide what it would post. */
+export interface SocialConfig {
+  /** Public channel link. Without it a post is proof with nowhere to convert. */
+  channelUrl?: string;
+  minMultiple: number;
+  dailyRecap: boolean;
+  postIntervalMs: number;
+}
+
+export function loadSocial(): SocialConfig {
+  return {
+    channelUrl: process.env.CHANNEL_URL?.trim() || undefined,
+    minMultiple: num('X_MIN_MULTIPLE', 5),
+    dailyRecap: bool('X_DAILY_RECAP', true),
+    postIntervalMs: num('X_POST_INTERVAL_SEC', 300) * 1000,
+  };
+}
+
 export function loadConfig(): AppConfig {
   return {
     ...loadPresentation(),

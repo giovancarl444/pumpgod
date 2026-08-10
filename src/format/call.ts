@@ -24,7 +24,8 @@ export function money(n: number | undefined): string | undefined {
 }
 
 function trim(n: number): string {
-  return n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  const fixed = n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2);
+  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
 }
 
 function heading(signal: Signal): string {

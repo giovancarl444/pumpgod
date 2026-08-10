@@ -202,6 +202,7 @@ npm run bench            # parser latency
 npm run bench -- --network   # add send round-trip (posts probes to the war room)
 npm run replay           # re-run the journal through the current parser
 npm run scorecard        # what each source's calls actually did
+npm run recap            # what the X feed would post (posts nothing)
 npm test                 # parser + message rendering + outcome tracking
 ```
 
@@ -231,6 +232,59 @@ actually published.
 
 That table is the promotion rule: `shadow` → `review` → `auto` on the numbers, not on vibes.
 
+## Growing the channel
+
+A call group grows on proof, and every call we publish is already measured: entry, peak, and
+how long the run took. The X feed is that record, posted automatically.
+
+```
+  ┌─ solana:DH5K…pump:10x · 70/280
+  │ $ZHAO did 10x ⚡
+  │
+  │ called at $33.2K → $332K
+  │ 24m
+  │
+  │ https://t.me/pumpgod_fun
+  └─
+  ┌─ daily:2026-08-09 · 105/280
+  │ pumpgod · 9 Aug
+  │
+  │ 3 calls
+  │ 2 × 2x · 1 × 5x · 1 × 10x
+  │ best $ZHAO 12.4x · 10x in 24m
+  │
+  │ https://t.me/pumpgod_fun
+  └─
+```
+
+Three rules are enforced in code, because each one is a way accounts like this lose credibility:
+
+- **Only calls we actually published.** Shadow and dry-run calls are tracked precisely so we can
+  judge a source privately. Posting one as ours would be a lie the public channel disproves —
+  it is a timestamped record anyone can check a post against.
+- **The numbers multiply out.** A milestone post shows entry × that milestone, not the recorded
+  peak cap. The two disagree slightly when they were sampled a moment apart, and a post whose
+  own arithmetic fails is the first thing a sceptic notices.
+- **The denominator is in the daily recap.** `3 calls` sits above the winners, and a flat day
+  says `none ran — that happens`. A group that only ever shows its winners is the one nobody
+  believes.
+
+Times are always attached to the milestone they belong to (`12.4x · 10x in 24m`), never to the
+peak — the time to 2x is not the time to the top.
+
+```bash
+npm run recap    # exactly what would post, without an X account existing
+```
+
+`X_MIN_MULTIPLE` is the floor (default 5x). Posting every 2x burns the free tier's ~500
+posts/month and trains people to scroll past. Only the best milestone a coin reached is posted,
+so a 12x does not also produce a 5x post.
+
+Credentials come from developer.x.com → your app → Keys and tokens. All four are needed, and
+the **access token pair must be regenerated after granting Read AND Write** or posting fails
+with a 403. Leave them blank and the feed stays off while `npm run recap` still previews it.
+Posting also requires `LIVE=true`, so nothing goes public by accident.
+
 ## Making money from it
 
 Trading terminals attribute a referral when someone **signs up** through your link, then pay a
@@ -258,10 +312,10 @@ The edge is detecting on-chain: new pool creation on Solana/Base via a geyser or
 feed, which puts us ahead of every group we currently follow rather than behind them.
 The journal from phase 1 is what tells us which signals are worth acting on.
 
-**Phase 3 — distribution.** X and TikTok: auto-generated recap videos of calls that ran,
-rendered straight from `data/tracked.json` — it already holds the entry, the peak and how long
-the run took, which is exactly what a recap needs. Remotion is a React renderer for video,
-which is why this is a TypeScript codebase.
+**Phase 3 — distribution.** The X feed above is the first half. The second is TikTok:
+auto-generated recap videos of calls that ran, rendered straight from `data/tracked.json` —
+it already holds the entry, the peak and how long the run took, which is exactly what a recap
+needs. Remotion is a React renderer for video, which is why this is a TypeScript codebase.
 
 ## Layout
 
@@ -274,5 +328,6 @@ src/
   metrics/    latency histograms
   store/      journal (buffered, off the hot path)
   track/      outcome tracking — entry, peak, milestones, rugs
-scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard
+  social/     X feed — milestone posts, daily recap, OAuth 1.0a posting
+scripts/      login, doctor, drill, dialogs, call, bench, replay, scorecard, recap
 ```

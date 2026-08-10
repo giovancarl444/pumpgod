@@ -9,8 +9,8 @@
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "TZ=Asia/Tokyo vitest run",
+    "test:watch": "TZ=Asia/Tokyo vitest",
     "call": "tsx scripts/call.ts",
     "login": "tsx scripts/login.ts",
     "doctor": "tsx scripts/doctor.ts",
@@ -18,6 +18,7 @@
     "dialogs": "tsx scripts/list-dialogs.ts",
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",
+    "recap": "tsx scripts/recap.ts",
     "scorecard": "tsx scripts/scorecard.ts"
   },
   "engines": {
