@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import {
+  loadBroadcast,
   loadCompetition,
   loadConfig,
   loadPromo,
@@ -9,6 +10,8 @@ import {
   SOURCES_PATH,
   type AppConfig,
 } from './config';
+import { createAgent } from './agent/agent';
+import { Broadcast } from './social/broadcast';
 import { Poster } from './social/poster';
 import { Followups } from './social/followup';
 import { PickAlerts } from './social/alerts';
@@ -74,6 +77,12 @@ function startReceipts(
   for (const board of boards) board.load();
   extras.alerts?.load();
 
+  // The one thing here that speaks without being asked. Gated twice — on `live` above and on
+  // its own flag — because the others answer a call that already exists, and this starts a
+  // message that does not.
+  const broadcast = new Broadcast({ enabled: loadBroadcast() });
+  broadcast.load();
+
   log.info(`receipts on · milestones answer their own call${pinned.live ? ' · track record self-updating' : ''}`);
 
   return setInterval(() => {
@@ -81,6 +90,7 @@ function startReceipts(
     void followups.run(transport, calls);
     if (extras.alerts) void extras.alerts.run(transport, calls);
     if (channelPeer) for (const board of boards) void board.refresh(transport, channelPeer, calls);
+    if (channelPeer) void broadcast.run(transport, channelPeer, calls);
   }, config.trackIntervalMs);
 }
 
@@ -280,12 +290,24 @@ async function runBot(config: AppConfig) {
   member.members.load();
 
   const social = loadSocial();
+
+  // Reads the tracker live rather than `Tracker.read()`: the file lags a poll behind, and an
+  // agent quoting a number the channel has already moved past is the first way it becomes
+  // untrustworthy. There is no per-chat state in it, which is what makes one agent across
+  // several groups a matter of passing more chat ids and nothing else.
+  const agent = createAgent({
+    calls: () => tracker.list(),
+    competition,
+    channelUrl: social.channelUrl,
+  });
+
   const handleDirect = createDirectHandler({
     api,
     promo,
     member: competition.enabled ? member : undefined,
     competition,
     channelUrl: social.channelUrl,
+    agent,
   });
 
   // The same two verbs, arriving by tap instead of by typing. A press carries no authority

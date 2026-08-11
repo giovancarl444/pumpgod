@@ -49,14 +49,33 @@ export function search(query: string, timeoutMs: number): Promise<DexPair[] | un
   return get(`${BASE}/search?q=${encodeURIComponent(query)}`, timeoutMs);
 }
 
-/** Deepest liquidity is the pool people will actually trade against. */
-export function deepest(pairs: DexPair[]): DexPair | undefined {
+/**
+ * The pool people are actually trading in.
+ *
+ * Ranked by traded volume rather than reported depth, because depth can be fiction and volume
+ * is much harder to fake into existence. A Meteora pool for PARKIFY advertised $1.07bn of
+ * liquidity and a $1.43bn market cap on a coin worth $225k, off **one** transaction in
+ * twenty-four hours; the pool people were really using was a pumpswap one with $35k of depth
+ * and fourteen thousand trades. Ranking by depth took the fiction.
+ *
+ * Everything downstream inherits this choice — the price, the market cap printed on the card,
+ * the chart we link, and the pool address the entry and the peak are later read back from. So
+ * the failure was not cosmetic: that coin would have published at roughly six thousand times
+ * its real size. It surfaced only because GeckoTerminal keeps no candles for a pool nobody
+ * trades in, which quietly cost 41% of scraped calls their true entry price.
+ *
+ * Volume falls back to depth when nothing has traded anywhere yet, which is the honest order
+ * for a coin minutes old — at that point depth is the only evidence there is.
+ */
+export function mainPool(pairs: DexPair[]): DexPair | undefined {
   if (!pairs.length) return undefined;
+  const traded = pairs.filter((p) => (p.volume?.h24 ?? 0) > 0);
+  if (traded.length) return traded.reduce((a, b) => ((b.volume?.h24 ?? 0) > (a.volume?.h24 ?? 0) ? b : a));
   return pairs.reduce((a, b) => ((b.liquidity?.usd ?? 0) > (a.liquidity?.usd ?? 0) ? b : a));
 }
 
 export interface TokenView {
-  /** Deepest pool: what a buyer actually trades against, and the chart worth linking to. */
+  /** The pool with the real trading in it: what a buyer meets, and the chart worth linking. */
   best: DexPair;
   stats: Stats;
   /** The coin's artwork, if any pool carries a profile for it. */
@@ -66,7 +85,7 @@ export interface TokenView {
 /**
  * Collapses every pool holding a token into one view.
  *
- * Liquidity and volume are summed rather than read off the deepest pool, because market cap
+ * Liquidity and volume are summed rather than read off the main pool, because market cap
  * is a whole-token number — comparing it against a single pool reads a token whose depth is
  * spread across several as unbacked, and the screen would hold back a perfectly tradable
  * call. DexScreener caps the pool list, so a sum can still undercount; that direction is the
@@ -139,14 +158,55 @@ export function tokenText(value: string | undefined): string | undefined {
   return clip(cleaned, TEXT_LIMIT);
 }
 
+/**
+ * Could a pool this deep exist for a coin this size?
+ *
+ * A pool holds tokens on one side, so the value it can hold is bounded by what the whole coin
+ * is worth — counting both sides, at the impossible extreme where every last token sits in one
+ * pool, twice that. Three times is slack no honest pool needs.
+ *
+ * This is not pedantry about a chart. Liquidity is summed across pools and then read by the
+ * risk screen, so one pool advertising $1.07bn against a $225k coin does not merely look odd,
+ * it carries a coin with $35k of real depth over any floor we could set. The comment on the
+ * sum below is right that undercounting is the safe direction — which is exactly why
+ * overcounting cannot be left in.
+ *
+ * With no market cap to compare against there is nothing to test, and the pool is kept: this
+ * throws out the impossible, not the merely unknown.
+ */
+function plausible(pair: DexPair, marketCapUsd: number | undefined): boolean {
+  const liquidity = pair.liquidity?.usd;
+  if (!marketCapUsd || !liquidity) return true;
+  return liquidity <= marketCapUsd * 3;
+}
+
 export function aggregate(pairs: DexPair[], tokenAddress: string): TokenView | undefined {
   const q = tokenAddress.toLowerCase();
-  const own = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);
-  const best = deepest(own);
+  const matching = pairs.filter((p) => p.baseToken?.address?.toLowerCase() === q);
+  const best = mainPool(matching);
   if (!best) return undefined;
 
-  const liquidityUsd = sum(own.map((p) => p.liquidity?.usd));
-  const volumeUsd = sum(own.map((p) => p.volume?.h24));
+  /**
+   * One address, one chain.
+   *
+   * An EVM address is a hash of the deployer and a nonce, so the same string is routinely a
+   * *different token* on another chain — and DexScreener answers the token endpoint by address
+   * across all of them. Matching on the address alone therefore sums the liquidity of several
+   * unrelated coins into one card and reads the chain off whichever of them traded most.
+   *
+   * Seen live: one scraped address came back as three coins at once, on base, robinhood and
+   * ethereum. Small numbers in that instance, but the direction is the dangerous one — the sum
+   * only ever runs high, and the risk screen reads it to decide whether a pool can be exited.
+   *
+   * The busiest pool decides which chain is meant, which is the same judgement `mainPool`
+   * already makes and for the same reason: the coin somebody is asking about is the one with
+   * a market, not the one that happens to share its address.
+   */
+  const own = matching.filter((p) => p.chainId === best.chainId);
+
+  const real = own.filter((p) => plausible(p, best.marketCap ?? best.fdv));
+  const liquidityUsd = sum(real.map((p) => p.liquidity?.usd));
+  const volumeUsd = sum(real.map((p) => p.volume?.h24));
   // Age is when the coin first had a market, not when its busiest pool opened — a migrated
   // launch keeps its original bonding-curve pool, and that is the honest birth date.
   const created = own.map((p) => p.pairCreatedAt).filter((t): t is number => typeof t === 'number');

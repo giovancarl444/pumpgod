@@ -8,6 +8,7 @@ loadEnv();
 
 const ROOT = resolve(__dirname, '..');
 const SOURCES_PATH = resolve(ROOT, 'config/sources.json');
+const WATCHLIST_PATH = resolve(ROOT, 'config/watchlist.json');
 
 function required(key: string): string {
   const v = process.env[key]?.trim();
@@ -245,6 +246,42 @@ export function loadSocial(): SocialConfig {
 }
 
 /**
+ * Chains the shadow scraper will record — every chain by default, whatever `CHAINS` says.
+ *
+ * These look like the same setting and are not. `CHAINS` answers "what are we willing to put
+ * our name on", which is a decision about risk. This answers "what are we willing to look at",
+ * which is a question about the world, and the two only coincided by accident because one
+ * config value was reachable from both places.
+ *
+ * Nothing recorded here can be published — `shadow.ts` holds no transport and writes only the
+ * `shadow` outcome — so narrowing it buys no safety at all. What it costs is real: on a live
+ * pass, 23 of 70 rival calls were bsc or Robinhood, so `CHAINS=solana` would have scored those
+ * channels on a third less of their output than they actually produced, and scored a channel
+ * that mostly calls Robinhood clones on almost none of it. A scorecard built from a biased
+ * sample is worse than no scorecard, because it looks like an answer.
+ *
+ * Collect wide, filter narrow: what was never recorded cannot be reconsidered later, and the
+ * per-chain split is still there to filter on when deciding who to actually copy.
+ */
+export function loadShadowChains(): Chain[] {
+  return chainList('SHADOW_CHAINS', []);
+}
+
+/**
+ * Whether the agent may post into the channel unprompted.
+ *
+ * Off by default, and more emphatically than the other flags here. Everything else the agent
+ * does is a reply to somebody, where the worst case is one unhelpful answer; this writes to the
+ * channel on a timer, from a daemon that restarts on every source edit. A default of `true`
+ * would mean the first save after adding the feature posted to the live channel.
+ *
+ * See `src/social/broadcast.ts` for the other two conditions it has to clear.
+ */
+export function loadBroadcast(): boolean {
+  return bool('AGENT_BROADCAST', false);
+}
+
+/**
  * A bot token and a user session are alternatives, not a pair: the bot publishes, and only a
  * user account can read a rival group. Requiring the my.telegram.org credentials up front would
  * make the cheap half of the setup wait on the expensive one.
@@ -317,4 +354,40 @@ export function loadSources(): Source[] {
   });
 }
 
-export { SOURCES_PATH, ROOT };
+/**
+ * The channels the scraper measures, as bare public @handles.
+ *
+ * A flat list of strings and nothing else, which is the point. `config/sources.json` carries a
+ * mode per source because those are read over a logged-in account and can be promoted to
+ * publishing; nothing read from a public web preview ever can, so there is no field here to set
+ * wrongly. A handle on this list gets measured. That is the only thing being on it can mean.
+ *
+ * Gitignored, like `sources.json`, for the same two reasons: the repo is public, and which
+ * groups we rate worth watching is the one piece of our homework a competitor would actually
+ * want.
+ */
+export function loadWatchlist(path = WATCHLIST_PATH): string[] {
+  if (!existsSync(path)) return [];
+
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  const raw = Array.isArray(parsed) ? parsed : (parsed as { handles?: unknown }).handles;
+  if (!Array.isArray(raw)) {
+    throw new Error(`${path} must be a JSON array of @handles, or an object with a "handles" array.`);
+  }
+
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    // Whole t.me links are what you get from copying a channel out of Telegram, so they are
+    // accepted rather than rejected with a message about formatting.
+    const handle = entry
+      .trim()
+      .replace(/^https?:\/\/(?:t\.me|telegram\.me)\/(?:s\/)?/i, '')
+      .replace(/^@/, '')
+      .replace(/[/?#].*$/, '');
+    if (/^[A-Za-z0-9_]{4,32}$/.test(handle)) seen.add(handle);
+  }
+  return [...seen];
+}
+
+export { SOURCES_PATH, WATCHLIST_PATH, ROOT };

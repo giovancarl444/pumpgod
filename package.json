@@ -20,9 +20,12 @@
     "bench": "tsx scripts/bench.ts",
     "replay": "tsx scripts/replay.ts",
     "recap": "tsx scripts/recap.ts",
+    "shadow": "tsx scripts/shadow.ts",
     "scorecard": "tsx scripts/scorecard.ts",
+    "audit": "tsx scripts/audit.ts",
     "scoreboard": "tsx scripts/scoreboard.ts",
-    "leaderboard": "tsx scripts/leaderboard.ts"
+    "leaderboard": "tsx scripts/leaderboard.ts",
+    "digest": "tsx scripts/digest.ts"
   },
   "engines": {
     "node": ">=18.14.0"

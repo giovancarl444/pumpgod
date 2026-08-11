@@ -79,6 +79,37 @@ function riskLine(signal: Signal, verbose: boolean): string | undefined {
   return `${icon} <b>${escapeHtml(headlineFlag(flags)!.detail)}</b>`;
 }
 
+/** Below this the pool cannot be exited, and the screen flags it. Kept in step with `risk.ts`. */
+const OK_LIQUIDITY_USD = 3_000;
+
+/**
+ * The one line a clean screen earns.
+ *
+ * Built from what was actually read, never from the absence of flags — those are not the same
+ * statement, and the gap between them is the whole risk. `chainFlags` returns nothing at all
+ * when the chain was never asked, which is right for the relay path where a warning on every
+ * call would bury the real ones, but it means a verdict of `clear` quietly includes "we did
+ * not look". A card claiming the mint is revoked when nobody read the mint is worse than a
+ * card that says nothing: it is the exact assurance people are being asked to trust us for.
+ *
+ * So each half is earned separately. The authorities are claimed only against a mint we hold
+ * and both keys confirmed dead; the depth only against a real reading above the floor. If
+ * neither was checked the line does not appear, and the card is silent rather than reassuring.
+ */
+function clearedLine(signal: Signal): string | undefined {
+  if (signal.risk.level !== 'clear' || signal.risk.flags.length) return undefined;
+
+  const parts: string[] = [];
+
+  const mint = signal.call.onchain?.mint;
+  if (mint && !mint.freezeAuthority && !mint.mintAuthority) parts.push('mint &amp; freeze revoked');
+
+  const liquidity = signal.call.stats.liquidityUsd;
+  if (liquidity !== undefined && liquidity >= OK_LIQUIDITY_USD) parts.push('liquidity ok');
+
+  return parts.length ? `✅ <b>${parts.join(' · ')}</b>` : undefined;
+}
+
 function signalTitle(signal: Signal): string {
   const { name, ticker } = signal.call;
   const label = name && ticker ? `${name} | ${ticker}` : ticker || name || 'New call';
@@ -141,8 +172,10 @@ export function renderPublicCall(signal: Signal, opts: RenderOptions): string {
     ...statBlock(signal),
   ];
 
-  // Above the links, so a danger flag cannot be scrolled past on the way to Buy.
-  const risk = riskLine(signal, false);
+  // Above the links, so a danger flag cannot be scrolled past on the way to Buy. The cleared
+  // line sits in the same place for the same reason: it is the answer to the question the
+  // reader is actually asking before they tap.
+  const risk = riskLine(signal, false) ?? clearedLine(signal);
   if (risk) lines.push('', risk);
 
   // The links are an action rather than another fact, so they are always set off from the

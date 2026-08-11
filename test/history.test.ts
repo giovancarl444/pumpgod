@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { peakSince } from '../src/pipeline/history';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NETWORK, pacing, peakSince, priceAt } from '../src/pipeline/history';
+import { log } from '../src/log';
+import type { Chain } from '../src/types';
 
 const T0 = 1_700_000_000_000;
 const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9';
@@ -20,8 +22,58 @@ function serve(body: string, status = 200) {
   return seen;
 }
 
+// The real queue leaves seconds between requests to stay inside the free tier. Nothing here
+// reaches the network, so waiting for it would only make the suite slow.
+beforeEach(() => {
+  pacing.gapMs = 0;
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+/**
+ * The rate limit is the one failure on this path that does not look like a failure.
+ *
+ * A refused request returns undefined, which is indistinguishable from a coin with no history,
+ * and the caller falls back to whatever price we can see right now — the exact number the
+ * chart lookup exists to keep out of the record. The first full watchlist pass priced 9% of
+ * calls off the chart and 91% off our own clock, and reported success the whole way.
+ */
+describe('being refused by the free tier', () => {
+  it('retries a 429 rather than reporting no history', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', async () => {
+      n += 1;
+      if (n === 1) return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { attributes: { ohlcv_list: [[T0 / 1000, 1, 1, 1, 0.5, 1]] } } }),
+      };
+    });
+
+    expect(await priceAt('solana', POOL, T0 + 60_000)).toBe(0.5);
+    expect(n).toBe(2);
+  });
+
+  it('gives up loudly rather than silently, once retries are spent', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    let n = 0;
+    vi.stubGlobal('fetch', async () => {
+      n += 1;
+      return { ok: false, status: 429, json: async () => ({}) };
+    });
+
+    expect(await priceAt('solana', POOL, T0)).toBeUndefined();
+    // Four attempts, not one: a single refusal must not be mistaken for an absent chart.
+    expect(n).toBe(4);
+    // And it says so. Falling back to the live price is a real cost to the measurement, so it
+    // is not allowed to happen quietly — that silence is what hid the problem the first time.
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toMatch(/rate limited/i);
+    warn.mockRestore();
+  });
 });
 
 describe('reading a peak off the chart', () => {
@@ -60,7 +112,9 @@ describe('reading a peak off the chart', () => {
   // from a real answer — so an unmapped chain must not reach the network at all.
   it('does not guess a network it has no slug for', async () => {
     const seen = serve(candles([[T0, 1]]));
-    expect(await peakSince('robinhood', POOL, T0)).toBeUndefined();
+    // `unknown` is the only chain left with no slug, and it is unmappable by construction:
+    // it names the case where we could not tell what chain a call was on.
+    expect(await peakSince('unknown', POOL, T0)).toBeUndefined();
     expect(seen).toHaveLength(0);
   });
 
@@ -72,5 +126,85 @@ describe('reading a peak off the chart', () => {
   it('survives a pool with no candles at all', async () => {
     serve(JSON.stringify({ data: { attributes: { ohlcv_list: [] } } }));
     expect(await peakSince('solana', POOL, T0)).toBeUndefined();
+  });
+
+  /**
+   * A chain we can publish but cannot price is the worst shape of bug this file has, because
+   * nothing anywhere reports it. The call resolves, the card goes out, and the entry price
+   * silently becomes "whatever it cost when we happened to look" — which on a scraped call is
+   * hours of move handed to or taken from the group being measured.
+   *
+   * `base`, `blast`, `sui` and `ton` were all missing while being fully parseable, and it cost
+   * a quarter of the sample. The map below is exhaustive over `Chain` on purpose: adding a new
+   * chain to the union fails to compile until someone states, here, whether it can be priced.
+   */
+  it('can price every chain it will accept a call on', () => {
+    const priceable: Record<Chain, boolean> = {
+      solana: true,
+      ethereum: true,
+      base: true,
+      bsc: true,
+      arbitrum: true,
+      polygon: true,
+      avalanche: true,
+      blast: true,
+      sui: true,
+      tron: true,
+      ton: true,
+      hyperliquid: true,
+      // Robinhood was assumed unpriceable when this list was first written, and it is not:
+      // GeckoTerminal indexes it and returns candles for its pools. That guess alone was 17 of
+      // 70 rows on a live pass — the rival channels are calling Robinhood-chain clones of
+      // famous names far more often than anyone would predict, which is exactly the sort of
+      // thing an assumption gets wrong and a measurement does not.
+      robinhood: true,
+      // The absence of an answer rather than a place, so there is nothing to look up. This one
+      // falls back to the live price, which is honest when there is no chart to read — it is
+      // the *undeclared* fallbacks that were the bug.
+      unknown: false,
+    };
+
+    const missing = Object.entries(priceable)
+      .filter(([chain, expected]) => expected && !NETWORK[chain as Chain])
+      .map(([chain]) => chain);
+    expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * A pool has two tokens, and the one GeckoTerminal calls "base" is not always ours.
+ *
+ * The busiest pool for SPX6900 was `SPY / SPX6900`. GeckoTerminal's base was SPY, so the entry
+ * price went into the record as $772.97 against a real price of $0.000119 — six and a half
+ * million times over, on a row flagged `entryFromChart: true`, which is the flag that is
+ * supposed to mean this number is the trustworthy one.
+ *
+ * There is no symptom to catch downstream. Nothing is missing, nothing errors, and $772 is not
+ * an absurd price for a thing called SPY. Naming the token removes the assumption instead of
+ * checking it afterwards, which is why the guard is on the request rather than on the answer.
+ */
+describe('which side of the pool the price comes from', () => {
+  it('names the coin when asking for a price at a moment', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000, 8000, 'So11111111111111111111111111111111111111112');
+    expect(seen[0]).toContain('token=So11111111111111111111111111111111111111112');
+  });
+
+  it('names the coin when asking for a peak', async () => {
+    const seen = serve(candles([[T0 + 60_000, 2]]));
+    await peakSince('solana', POOL, T0, 8000, 'So11111111111111111111111111111111111111112');
+    expect(seen[0]).toContain('token=So11111111111111111111111111111111111111112');
+  });
+
+  it('asks for whatever the pool defaults to when no coin is named', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000);
+    expect(seen[0]).not.toContain('token=');
+  });
+
+  it('escapes the address rather than pasting it into the query', async () => {
+    const seen = serve(candles([[T0, 1]]));
+    await priceAt('solana', POOL, T0 + 60_000, 8000, 'a&limit=999');
+    expect(seen[0]).toContain('token=a%26limit%3D999');
   });
 });

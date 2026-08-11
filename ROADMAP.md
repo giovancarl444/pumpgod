@@ -15,6 +15,28 @@ making people care, and the honesty is the thing we sell.
 > is the only thing in the whole plan a competitor cannot copy with a screenshot editor, and
 > every growth idea below is downstream of it.
 
+## The standing rule (spans both sections — read this before planning anything)
+
+**1. External is the focus.** Content, social, distribution. Engine work earns its place only by
+unblocking or protecting growth; it no longer stands on its own merit.
+
+**2. The Engine has capital now.** The old constraint — *as low budget as possible, small dents in
+performance only* — is **lifted for backend and infrastructure**. Cost stops being the tiebreaker;
+correctness and latency become the tiebreakers. Two things this makes live immediately:
+
+- **Paid price/candle data.** Free-tier rate limiting is the single biggest source of silent
+  failure in this project's history. A refused request looks exactly like a coin with no chart —
+  that was the first of four bugs, and it is the only one that can recur under load.
+- **An always-on host, and paid RPC.** The tracker currently runs on a laptop. Every lid-close is
+  a gap in a record whose entire selling point is that it has no gaps, and latency is the property
+  most worth paying for once calls are live.
+
+**3. Manual calling is fine. Manual *recording* is not.** Picking coins by hand is good judgement
+and should continue. But every call goes through `/signal <ca>` so it is timestamped and priced
+**before the outcome is known**. Identical effort, identical content — except one version is
+checkable by a stranger and the other is another screenshot nobody believes. A call made outside
+the machine spends the one advantage that cannot be copied.
+
 ---
 
 # Section 1 — Engine (paused)
@@ -34,6 +56,22 @@ The signal machine. Full reasoning lives in `ENGINE.md`; this is the checklist v
 - [x] Member call competition, ranked on median peak with a minimum sample
 - [x] `isPublished()` — the single gate between measured and claimed, with its own test
 - [x] Coin names cannot inject HTML into our own card, or break a Telegram invoice
+- [x] One green line on the card when the screen comes back clean — *mint & freeze revoked ·
+      liquidity ok*. Built from what was actually **read**, not from the absence of a flag, so
+      "we looked and it is fine" can never be confused with "we did not look"
+- [x] **Rival channels measured without an account** (`npm run shadow`). Reads the public
+      `t.me/s/` page of 76 channels, takes Telegram's own timestamp, and prices the call off the
+      chart at that minute. No login, no joining, nothing bannable — and a call found two hours
+      late scores exactly as it would have live, which is what makes the account risk deferrable
+      to the two or three groups a real record eventually justifies
+- [x] **Every recorded number checkable against the chart** (`npm run audit`). Reads each entry
+      and peak back off the candles and reports where the record disagrees; `--fix` adopts the
+      chart. This is the product's own claim run against itself, and the only check here that
+      does not depend on our code being right — the candles come from somewhere else and were
+      written by trades. It exists because the four bugs found so far all reported success and
+      returned a plausible number, and every one of them was caught by a person happening to
+      think a figure looked large. Dry by default; refuses to write under a running daemon
+      rather than half-landing a repair
 
 ## 1.2 On-chain safety — shipped this session
 
@@ -165,23 +203,42 @@ answers instantly, at 3am, consistently, with real numbers, is a better experien
 team can provide**, and consistency is what turns a channel into a scene. The compounding asset
 is the answer set plus the record it reads from, and both are ours.
 
-- [ ] Persona + boundary file (who it is, what it never does)
-- [ ] Bounded answer set, each backed by a real lookup
+- [x] Persona + boundary file (`src/agent/persona.ts`) — fixed constants, not a prompt, because
+      a persona that can move is a persona that will
+- [x] Bounded answer set, each backed by a real lookup (`src/agent/knowledge.ts`). Nothing
+      generates, so there is no step at which a plausible number can be invented
+- [x] Rate caps — 6 replies per user and 12 per chat in a 10-minute window. Over the cap is
+      answered with silence, since being told off by a bot is worse than being ignored by one
+- [x] **Speaks first, not just when spoken to** (`src/social/broadcast.ts`) — one digest a day
+      of the last 24h, worst call included. Gated on `AGENT_BROADCAST`, **off by default**, and
+      the clock only advances on a successful send. `npm run digest` previews it without posting
 - [ ] Turn **off** Telegram privacy mode so the bot can see group messages (BotFather setting —
       by default a bot in a group only sees commands and replies to itself)
-- [ ] Rate caps per user and per hour, so cost scales with value and not with chatter
 - [ ] One process, many chat ids — "one agent across servers" is nearly free once it exists
 - [ ] Measure it: which answers preceded a join, a stay, a subscribe. Same fitness-function shape
       the source scorecard already uses
+- [ ] **Deliberately not built: a learning/identity layer.** Asked for, and the reason it is
+      absent is the reason the rest works — there is no generator, so there is nothing that can
+      hallucinate. If it ever comes it sits *above* this and is handed the facts rather than
+      recalling them, so the numbers stay lookups either way
 
 ## 2.4 Content — what we actually post
 
-We have material nobody else has. In rough order of how unfair the advantage is:
+We have material nobody else has. In rough order of how unfair the advantage is.
 
-- [ ] **The rival scorecard.** *"We measured 40 call groups for two weeks. Here is the table."*
-      The single best content idea in the plan. Needs zero good calls of our own, is genuinely
-      useful, is inherently viral, and every group on it will argue about it in public — which is
-      the marketing
+**The drafts, the framing and the honesty rules now live in `CONTENT.md`.** One decision out of
+writing them is worth repeating here, because it changes what this section is: we publish
+**measurements, not a leaderboard**. "We ranked 76 groups" is a claim about people and the
+argument lands on us; "we priced every call they made, here is what the chart did" is a claim
+about charts and anyone can settle it with the contract address. It is also postable *weeks*
+earlier, because it does not need the sample to be full to be true.
+
+- [x] The rival scorecard **measured** — 76 channels, recording since 11 Aug. Rows carry the
+      channel's own timestamp and an entry price read off the chart at that minute
+- [ ] **The rival scorecard published.** *"We priced every call 76 groups made for two weeks.
+      Here is the distribution."* Needs zero good calls of our own, is genuinely useful, and
+      every group on it will argue about it in public — which is the marketing. Name nobody on
+      the bad end, ever
 - [ ] **The losses.** *"We called this. It did -40%. Here's the chart."* Nobody does this, which
       is precisely why it lands. It is also the cheapest trust you will ever buy
 - [ ] **The saves.** *"This coin was trending. Its freeze authority was live. Here is what that

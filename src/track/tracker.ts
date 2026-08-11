@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ROOT } from '../config';
 import { peakSince } from '../pipeline/history';
-import type { DexPair } from '../pipeline/dexscreener';
+import { aggregate, type DexPair, type TokenView } from '../pipeline/dexscreener';
+import { chainFromSlug } from '../parse/chains';
 import type { Chain, RiskLevel, Signal } from '../types';
 import { log } from '../log';
 
@@ -16,6 +17,19 @@ const RETIRE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** Below this, the pool is gone in any practical sense. */
 const RUG_LIQUIDITY_USD = 500;
+
+/**
+ * How far a sampled peak may sit above the chart before we stop believing our own sample.
+ *
+ * Two live pools of one token are dragged together by anyone willing to arbitrage them, so they
+ * disagree by percent, not by multiples. Ten times apart is not two honest quotes — it is one
+ * of them being wrong, and the sampled side is the one with no candles behind it. See `settle`.
+ *
+ * Exported so `npm run audit` applies the same rule to rows already written. A row poisoned
+ * before this existed cannot fix itself: the peak only ever climbed, so the fiction outlived
+ * the bug. One threshold, or the audit and the tracker disagree about what a bad number is.
+ */
+export const CONTRADICTED = 10;
 
 export type Outcome =
   | 'called'
@@ -90,6 +104,42 @@ export interface TrackedCall {
   postThreadId?: number;
   /** The peak was confirmed against the chart rather than left as whatever we sampled. */
   athFromChart?: boolean;
+  /**
+   * The entry was read back off the chart at `calledAt`, rather than being the first price we
+   * happened to see.
+   *
+   * Only ever set on a call we found late — one scraped from another group's public feed. It
+   * is the flag that separates "this is what they got" from "this is what we saw when we got
+   * round to looking", and the scorecard is entitled to throw out any measurement that lacks
+   * it rather than quietly ranking a group on our own polling delay.
+   */
+  entryFromChart?: boolean;
+}
+
+/**
+ * Numbers known at the moment a call is recorded, for calls that did not happen just now.
+ *
+ * The live path needs none of this: it hears a call as it is made, so "now" is the call time
+ * and the first quote is the entry. A call lifted out of somebody else's feed an hour after
+ * they posted it has neither, and inventing them would make a rival's score a function of our
+ * scrape interval. Every field here is therefore a fact recovered from a source outside this
+ * process — Telegram's own timestamp, or the chart.
+ */
+export interface TrackSeed {
+  /** When the call was actually made. Their clock, never ours. */
+  calledAt?: number;
+  /** The price at `calledAt`, off the chart. */
+  entryPriceUsd?: number;
+  entryMcUsd?: number;
+  /**
+   * The pool, resolved up front rather than on the first poll.
+   *
+   * Load-bearing for a backfilled call: one already older than the tracking window retires on
+   * the very first pass, before any poll has run, and `settle` needs a pool to read the peak
+   * from. Without this such a call would be stored with no numbers at all.
+   */
+  poolAddress?: string;
+  entryFromChart?: boolean;
 }
 
 /** Identity of the coin itself. EVM addresses are case-insensitive; Solana's are not. */
@@ -104,6 +154,22 @@ function coinKey(chain: Chain, address: string): string {
  */
 function key(sourceId: string, chain: Chain, address: string): string {
   return `${sourceId}:${coinKey(chain, address)}`;
+}
+
+/**
+ * Which of two copies of one call holds the peak worth keeping.
+ *
+ * A peak read off the chart wins over one built from samples, whichever way round the sizes
+ * fall. The chart covers every minute of the window; a sample covers the minutes a process
+ * happened to be looking, and is a lower bound on a good day and a fiction on a bad one. Where
+ * neither has been settled the larger wins, because a moment either process saw did happen.
+ *
+ * Exported for the test that pins it. The rule is only visible when two processes are running,
+ * which is exactly when nobody is watching it.
+ */
+export function bestPeak<T extends { athPriceUsd?: number; athFromChart?: boolean }>(a: T, b: T): T {
+  if (a.athFromChart !== b.athFromChart) return a.athFromChart ? a : b;
+  return (a.athPriceUsd ?? 0) > (b.athPriceUsd ?? 0) ? a : b;
 }
 
 export interface Quote {
@@ -178,8 +244,15 @@ export class Tracker {
     }
   }
 
-  /** Called from the router. Cheap and synchronous — the first price fetch is deferred. */
-  track(signal: Signal, outcome: Outcome): TrackedCall {
+  /**
+   * Called from the router. Cheap and synchronous — the first price fetch is deferred.
+   *
+   * `seed` is for calls that did not happen just now: it is how a rival's post from an hour ago
+   * gets their timestamp and their entry rather than ours. It applies only when the record is
+   * created, for the same reason the existing-record branch below keeps the original entry —
+   * the first thing we learned about a call is the thing that was true when it was made.
+   */
+  track(signal: Signal, outcome: Outcome, seed?: TrackSeed): TrackedCall {
     const k = key(signal.source.id, signal.call.token.chain, signal.call.token.address);
 
     // A call typically arrives as `staged` and is promoted to `called` on approval. Keep
@@ -209,11 +282,13 @@ export class Tracker {
       address: signal.call.token.address,
       ticker: signal.call.ticker,
       name: signal.call.name,
-      calledAt: Date.now(),
+      calledAt: seed?.calledAt ?? Date.now(),
       risk: signal.risk.level,
       riskFlags: signal.risk.flags.map((f) => f.code),
-      entryMcUsd: signal.call.stats.marketCapUsd,
-      entryPriceUsd: signal.call.stats.priceUsd,
+      entryMcUsd: seed?.entryMcUsd ?? signal.call.stats.marketCapUsd,
+      entryPriceUsd: seed?.entryPriceUsd ?? signal.call.stats.priceUsd,
+      poolAddress: seed?.poolAddress,
+      entryFromChart: seed?.entryFromChart,
     };
     this.calls.set(k, created);
     this.dirty = true;
@@ -281,30 +356,86 @@ export class Tracker {
    * a call leaves the polling window, because that is when the number stops changing and
    * starts being quoted.
    *
-   * Only ever raises it. A candle high below what we watched happen means we are reading a
-   * different pool than we priced, and discarding a real observation for that is worse than
-   * keeping a conservative one.
+   * Normally only raises it. A candle high a little below what we watched happen means the run
+   * was sampled in a pool the chart is not quoting, and discarding a real observation for that
+   * is worse than keeping a conservative one.
+   *
+   * Past `CONTRADICTED` that reasoning inverts, and the word "conservative" changes sides. Two
+   * live pools of one token are held together by anybody willing to arbitrage them, so they do
+   * not sit orders of magnitude apart — a sample that far above the chart is not a pool we
+   * failed to quote, it is a number that was never true. Keeping the larger of two readings
+   * that disagree like that is not caution, it is picking the one that flatters us. PARKIFY
+   * sampled a peak 6,190x its chart, and the rule as written would have made that permanent:
+   * a fiction, quoted, on a record whose entire claim is that the chart agrees with it.
    */
   private async settle(call: TrackedCall): Promise<void> {
     if (!call.poolAddress || !call.entryPriceUsd) return;
 
-    const peak = await peakSince(call.chain, call.poolAddress, call.calledAt);
+    // Named, or a pool ordered the other way returns the peak of the coin we did not call.
+    const peak = await peakSince(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
     if (!peak) return;
 
     call.athFromChart = true;
     this.dirty = true;
-    if (peak.priceUsd <= (call.athPriceUsd ?? 0)) return;
+
+    const sampled = call.athPriceUsd ?? 0;
+    const label = call.ticker ? `$${call.ticker}` : call.address.slice(0, 8);
+
+    if (sampled > peak.priceUsd * CONTRADICTED) {
+      log.warn(`${label} sampled a peak ${(sampled / peak.priceUsd).toFixed(0)}x above its own chart — taking the chart`);
+    } else if (peak.priceUsd <= sampled) {
+      return;
+    } else if (sampled) {
+      log.info(`${label} peaked ${(peak.priceUsd / sampled).toFixed(2)}x higher than we sampled — corrected from the chart`);
+    }
 
     // Market cap is scaled from entry rather than read off the candle, which carries price
     // only. Supply is fixed for anything we call, so the ratio holds — and a figure derived
     // the same way the multiple is derived cannot contradict it.
-    const missed = call.athPriceUsd ? peak.priceUsd / call.athPriceUsd : 1;
     if (call.entryMcUsd) call.athMcUsd = (call.entryMcUsd * peak.priceUsd) / call.entryPriceUsd;
     call.athPriceUsd = peak.priceUsd;
     call.athAt = peak.at;
+  }
 
-    const label = call.ticker ? `$${call.ticker}` : call.address.slice(0, 8);
-    log.info(`${label} peaked ${missed.toFixed(2)}x higher than we sampled — corrected from the chart`);
+  /**
+   * Prices the peak of every call that has aged out, straight from the chart.
+   *
+   * The daemon already does this for the calls it is holding, inside `poll()`. Nothing was doing
+   * it for the calls the scraper writes, and the reason is worth stating because it is invisible
+   * from either side: `merged()` folds the file back in at save time, so a row another process
+   * added survives — but it is never loaded into the running daemon's map, so it is never polled
+   * and never retired. A scraped call kept its entry price and never got a peak.
+   *
+   * The scorecard reads peaks. So the failure was that every pass reported success, every row
+   * looked complete, and `PRICED` stayed at zero for as long as the daemon happened to stay up —
+   * which is the same shape as the chain-slug bug and the entry-price fallback before it. The
+   * measurement would have run for two weeks and produced nothing rankable.
+   *
+   * Live polling is not the fix, and would have been the wrong one even if it worked. A scraped
+   * call is being *scored*, not traded: its peak is best read once off the candles, exactly,
+   * rather than sampled 1,440 times and still missed if the process blinked. One request per
+   * call for its entire life, instead of one a minute.
+   *
+   * Attempted once each, exactly as `due()` retires the daemon's own: a call we could not price
+   * stays unpriced rather than being retried against a rate limit on every pass forever. The
+   * cap is per pass, not total — a cold-start backlog drains over the following passes instead
+   * of arriving at the candle API as one burst.
+   */
+  async settleAged(limit = 25): Promise<number> {
+    const now = Date.now();
+    let priced = 0;
+    for (const call of this.calls.values()) {
+      if (priced >= limit) break;
+      if (call.retired || now - call.calledAt <= RETIRE_AFTER_MS) continue;
+      call.retired = true;
+      this.dirty = true;
+      // Nothing to read a chart with. Retired above regardless, so it is not reconsidered.
+      if (!call.poolAddress || !call.entryPriceUsd) continue;
+      await this.settle(call);
+      priced++;
+    }
+    this.persist();
+    return priced;
   }
 
   private async poll(): Promise<void> {
@@ -335,18 +466,33 @@ export class Tracker {
         if (!res.ok) continue;
 
         const body = (await res.json()) as { pairs?: DexPair[] };
-        const best = new Map<string, DexPair>();
-        for (const pair of body.pairs ?? []) {
-          const addr = pair.baseToken?.address;
-          if (!addr) continue;
-          const k = addr.toLowerCase();
-          const current = best.get(k);
-          if (!current || (pair.liquidity?.usd ?? 0) > (current.liquidity?.usd ?? 0)) best.set(k, pair);
-        }
+        const pairs = body.pairs ?? [];
 
         for (const group of batch) {
-          const pair = best.get(group[0]!.address.toLowerCase());
-          if (pair) for (const call of group) this.apply(call, pair);
+          const call = group[0]!;
+          /**
+           * The same pool the card was built from, not a second opinion about it.
+           *
+           * This used to take whichever pool advertised the deepest liquidity, which is the
+           * exact fiction `mainPool` was written to reject — and it survived here for as long
+           * as it did because the two paths look unrelated: one publishes, one re-prices.
+           *
+           * PARKIFY caught it. A Meteora pool claiming $1.07bn of depth and a $1.43bn market
+           * cap, on a coin genuinely worth $229k, off one transaction in a day. The entry came
+           * off the chart and was right; every price after it came from the fiction pool. Five
+           * different channels had called that coin, so five of them were about to be credited
+           * with a **6,190x** — and a peak is the number the whole scorecard ranks on.
+           *
+           * Scoped to the chain the call was made on, rather than letting the busiest pool
+           * decide: an address can be a different coin elsewhere, and mid-run the namesake can
+           * out-trade the real one. `chainFromSlug` because our chain names are not
+           * DexScreener's and comparing the raw strings quietly matches nothing.
+           */
+          const view = aggregate(
+            pairs.filter((p) => !p.chainId || chainFromSlug(p.chainId) === call.chain),
+            call.address,
+          );
+          if (view) for (const c of group) this.apply(c, view);
         }
       } catch (err) {
         log.debug(`tracker poll failed: ${(err as Error).message}`);
@@ -356,18 +502,20 @@ export class Tracker {
     this.persist();
   }
 
-  private apply(call: TrackedCall, pair: DexPair): void {
+  private apply(call: TrackedCall, view: TokenView): void {
     // The pool as it was at call time, not whichever is deepest by the end. Liquidity can
     // migrate mid-run, and only the original is guaranteed to hold candles for the whole
     // window we need to read back.
-    call.poolAddress ??= pair.pairAddress;
+    call.poolAddress ??= view.best.pairAddress;
 
     applyQuote(
       call,
       {
-        priceUsd: pair.priceUsd ? Number(pair.priceUsd) : undefined,
-        mcUsd: pair.marketCap ?? pair.fdv,
-        liquidityUsd: pair.liquidity?.usd,
+        priceUsd: view.stats.priceUsd,
+        mcUsd: view.stats.marketCapUsd,
+        // Summed across the coin's real pools, as the card does. A rug is called on depth, and
+        // reading one pool of several would call it on a coin whose liquidity merely moved.
+        liquidityUsd: view.stats.liquidityUsd,
       },
       Date.now(),
     );
@@ -379,12 +527,77 @@ export class Tracker {
     return [...this.calls.values()];
   }
 
+
+  /**
+   * What we hold, folded together with what is already on disk.
+   *
+   * Two processes write this file. The daemon prices calls every minute; `npm run shadow`
+   * records what rival channels called. Each holds its own `Tracker` over the same path and
+   * each writes the file whole, so without this the one that saved last replaced the other's
+   * rows outright — and a row destroyed that way can be unrecoverable, because a peak only
+   * exists to be measured while it is happening.
+   *
+   * Collisions are not a worry: a key is `sourceId + chain + address`, and the two processes
+   * write disjoint sources (`tg:*` for scraped channels, ours for ours). So a key on both
+   * sides is one record seen twice, and the copy checked more recently holds the newer price.
+   *
+   * The peak needs its own rule, because it is a running maximum rather than a reading — the
+   * later copy of it is not the better one. Between two *sampled* peaks the larger wins: each
+   * is the best of the moments that process happened to look, and a moment either of them saw
+   * really happened. But a peak read off the chart is not a sample at all. It covers the whole
+   * window at once, so it beats any sample regardless of size, and a sample cannot be allowed
+   * to overrule it merely by being bigger.
+   *
+   * Without that second clause a corrected number does not stay corrected. A process holds
+   * every row it has loaded for as long as it runs, so an overnight `npm run shadow` would go
+   * on re-writing its own stale peak over the daemon's chart-settled one, every save, for as
+   * long as the loop lived — the fiction outliving not just the bug but the fix.
+   *
+   * Nothing in this class ever deletes a record, so folding disk back in cannot resurrect
+   * something that was meant to be gone.
+   */
+  private merged(): TrackedCall[] {
+    let onDisk: TrackedCall[] = [];
+    try {
+      if (existsSync(this.store)) onDisk = JSON.parse(readFileSync(this.store, 'utf8')) as TrackedCall[];
+    } catch (err) {
+      // An unreadable file is not a reason to drop what we are holding.
+      log.warn(`could not re-read tracked calls before saving: ${(err as Error).message}`);
+      return this.list();
+    }
+
+    const out = new Map(this.calls);
+    for (const theirs of onDisk) {
+      const k = key(theirs.sourceId, theirs.chain, theirs.address);
+      const ours = out.get(k);
+      if (!ours) {
+        out.set(k, theirs);
+        continue;
+      }
+      const fresher = (theirs.lastCheckedAt ?? 0) > (ours.lastCheckedAt ?? 0) ? theirs : ours;
+      const peak = bestPeak(theirs, ours);
+      out.set(
+        k,
+        peak === fresher
+          ? fresher
+          : {
+              ...fresher,
+              athPriceUsd: peak.athPriceUsd,
+              athMcUsd: peak.athMcUsd,
+              athAt: peak.athAt,
+              athFromChart: peak.athFromChart,
+            },
+      );
+    }
+    return [...out.values()];
+  }
+
   persist(): void {
     if (!this.dirty) return;
     this.dirty = false;
     try {
       mkdirSync(dirname(this.store), { recursive: true });
-      writeFileSync(this.store, JSON.stringify(this.list(), null, 2));
+      writeFileSync(this.store, JSON.stringify(this.merged(), null, 2));
     } catch (err) {
       log.warn(`could not persist tracked calls: ${(err as Error).message}`);
     }

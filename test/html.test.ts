@@ -178,6 +178,56 @@ describe('renderPublicCall', () => {
     expect(shown).toContain('Soaps Gems');
   });
 
+  /**
+   * The card's only positive safety claim, and the one place a bug is worse than a crash: a
+   * reader who trusts this line and gets a token whose mint was never read has been told
+   * something we did not know. Every case here is about which half is *earned*.
+   */
+  describe('the line a clean screen earns', () => {
+    function checked(over: { freezeAuthority?: string; mintAuthority?: string } = {}): Signal {
+      const signal = signalFixture();
+      signal.call.onchain = { mint: { supply: 1_000_000_000n, decimals: 6, ...over } };
+      return signal;
+    }
+
+    it('says so when the mint was read and both keys are dead', () => {
+      const html = renderPublicCall(checked(), opts());
+      expect(html).toContain('mint &amp; freeze revoked');
+      expect(html).toContain('liquidity ok');
+    });
+
+    it('stays silent about the mint when nobody read it', () => {
+      // `chainFlags` returns no flags at all when the chain was never asked — correct for the
+      // relay path, but it makes "clear" mean "nothing looked bad", not "we checked". Without
+      // this, every relayed call would claim a revocation nobody verified.
+      const html = renderPublicCall(signalFixture(), opts());
+      expect(html).not.toContain('revoked');
+      // The half that *was* measured is still allowed to speak.
+      expect(html).toContain('liquidity ok');
+    });
+
+    it('claims nothing when a live authority is sitting right there', () => {
+      const signal = checked({ freezeAuthority: 'FrEeZe1111111111111111111111111111111111111' });
+      signal.risk = { level: 'danger', flags: [{ code: 'freeze-authority', detail: 'freeze authority is live', level: 'danger' }] };
+      const html = renderPublicCall(signal, opts());
+      expect(html).not.toContain('✅');
+    });
+
+    it('does not vouch for depth it could not read', () => {
+      const signal = checked();
+      delete signal.call.stats.liquidityUsd;
+      const html = renderPublicCall(signal, opts());
+      expect(html).toContain('mint &amp; freeze revoked');
+      expect(html).not.toContain('liquidity ok');
+    });
+
+    it('does not call a pool nobody could exit "ok"', () => {
+      const signal = checked();
+      signal.call.stats.liquidityUsd = 900;
+      expect(renderPublicCall(signal, opts())).not.toContain('liquidity ok');
+    });
+  });
+
   it('carries the referral link only when one is configured', () => {
     expect(renderPublicCall(signalFixture(), opts())).not.toContain('href="https://axiom.trade/@');
     const withRef = renderPublicCall(signalFixture(), opts({ referralUrl: 'https://axiom.trade/@pumpgod' }));
