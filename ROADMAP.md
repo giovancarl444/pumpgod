@@ -15,6 +15,28 @@ making people care, and the honesty is the thing we sell.
 > is the only thing in the whole plan a competitor cannot copy with a screenshot editor, and
 > every growth idea below is downstream of it.
 
+## The standing rule (spans both sections — read this before planning anything)
+
+**1. External is the focus.** Content, social, distribution. Engine work earns its place only by
+unblocking or protecting growth; it no longer stands on its own merit.
+
+**2. The Engine has capital now.** The old constraint — *as low budget as possible, small dents in
+performance only* — is **lifted for backend and infrastructure**. Cost stops being the tiebreaker;
+correctness and latency become the tiebreakers. Two things this makes live immediately:
+
+- **Paid price/candle data.** Free-tier rate limiting is the single biggest source of silent
+  failure in this project's history. A refused request looks exactly like a coin with no chart —
+  that was the first of four bugs, and it is the only one that can recur under load.
+- **An always-on host, and paid RPC.** The tracker currently runs on a laptop. Every lid-close is
+  a gap in a record whose entire selling point is that it has no gaps, and latency is the property
+  most worth paying for once calls are live.
+
+**3. Manual calling is fine. Manual *recording* is not.** Picking coins by hand is good judgement
+and should continue. But every call goes through `/signal <ca>` so it is timestamped and priced
+**before the outcome is known**. Identical effort, identical content — except one version is
+checkable by a stranger and the other is another screenshot nobody believes. A call made outside
+the machine spends the one advantage that cannot be copied.
+
 ---
 
 # Section 1 — Engine (paused)
