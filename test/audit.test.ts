@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { apply, type Finding } from '../scripts/audit';
+import { apply, judge, type Finding } from '../scripts/audit';
 import type { TrackedCall } from '../src/track/tracker';
 
 /**
@@ -29,6 +29,63 @@ function call(over: Partial<TrackedCall> = {}): TrackedCall {
     ...over,
   } as TrackedCall;
 }
+
+/**
+ * The report has one number in it that carries weight — how many recorded figures were never
+ * true. Everything else is the ordinary gap between a sampled peak and a charted one. So the
+ * line between "the chart knows better" and "this was a lie" is the thing worth pinning, and it
+ * is the line that was already wrong once: the fiction marker used to be set only in the peak
+ * branch, so the worst entry in the whole record printed as unremarkable.
+ */
+describe('telling a wrong number from a merely improved one', () => {
+  it('calls a wildly wrong entry a fiction, not a refinement', () => {
+    // SPX6900: the pool was SPY / SPX6900 and the chart answered for the SPY side. Recorded as
+    // verified against the chart, which is our highest confidence marker — so the flag being
+    // set is not enough on its own to trust a figure, and this is the case that proves it.
+    const [found] = judge(call({ entryPriceUsd: 772.9697, entryFromChart: true }), 0.000119, undefined);
+
+    expect(found?.what).toBe('entry');
+    expect(found?.fiction).toBe(true);
+  });
+
+  /**
+   * A coin too new to have candles when it was scraped gets priced here for the first time.
+   * There is no disagreement in that — there was nothing to disagree with. Counting it as a
+   * number that was never true would inflate the one figure that is supposed to mean something,
+   * and it would do it in the direction that makes our own tooling look busiest.
+   */
+  it('does not call a first-ever price a fiction', () => {
+    const [found] = judge(call({ entryPriceUsd: undefined, entryMcUsd: undefined }), 0.000119, undefined);
+
+    expect(found?.what).toBe('entry');
+    expect(found?.was).toBeUndefined();
+    expect(found?.fiction).toBeFalsy();
+  });
+
+  it('calls a peak far above its own chart a fiction', () => {
+    // PARKIFY, the row that put eight separate channels at the top of the leaderboard at once.
+    const [found] = judge(call({ athPriceUsd: 1.43 }), undefined, { priceUsd: 0.000481, at: 1_700_000_100_000 });
+
+    expect(found?.what).toBe('peak');
+    expect(found?.fiction).toBe(true);
+  });
+
+  /**
+   * A call still inside its window has a peak that is the best of however many samples we took,
+   * so the chart sitting above it is the ordinary work of the tool rather than news. If this
+   * read as a fiction the report would be all noise and the real line would be lost in it.
+   */
+  it('treats a peak the chart merely knows better as ordinary', () => {
+    const [found] = judge(call({ athPriceUsd: 0.001 }), undefined, { priceUsd: 0.0024, at: 1_700_000_100_000 });
+
+    expect(found?.what).toBe('peak');
+    expect(found?.fiction).toBeFalsy();
+  });
+
+  it('says nothing about a row the chart agrees with', () => {
+    expect(judge(call({ entryPriceUsd: 0.001, entryFromChart: true }), 0.001, undefined)).toHaveLength(0);
+  });
+});
 
 describe('adopting the chart over a recorded number', () => {
   /**

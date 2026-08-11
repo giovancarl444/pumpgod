@@ -79,11 +79,22 @@ function price(n: number | undefined): string {
   return n < 0.01 ? n.toPrecision(3) : `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 }
 
-async function inspect(call: TrackedCall): Promise<Finding[]> {
+/**
+ * Decides what the two chart readings say about the record, and reads nothing itself.
+ *
+ * Split out from the fetching because this is the half that was wrong. An earlier version set
+ * the fiction marker inside the peak branch only — structurally unable to say an *entry* was
+ * never true — so SPX6900's $772.97 against a real $0.000119 printed with the same quiet tilde
+ * as a peak we had merely undersampled by a fifth. A number that is wrong by six and a half
+ * million times, rendered as unremarkable, is precisely the failure this file exists to catch,
+ * and the file had it. So the classifier is the part that has to be reachable by a test.
+ */
+export function judge(
+  call: TrackedCall,
+  entry: number | undefined,
+  peak: { priceUsd: number; at: number } | undefined,
+): Finding[] {
   const found: Finding[] = [];
-  if (!call.poolAddress) return found;
-
-  const entry = await priceAt(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
 
   /**
    * An entry is only ever improved by the chart, never argued with.
@@ -100,11 +111,16 @@ async function inspect(call: TrackedCall): Promise<Finding[]> {
   if (entry !== undefined && (!call.entryFromChart || ratio(entry, call.entryPriceUsd ?? 0) > 1 + TOLERANCE)) {
     // An entry cannot be undersampled the way a peak can — it is one price at one minute, and
     // both sides claim to be that same price. So any real gap here is one of them being wrong.
+    //
+    // Unless there is no recorded price at all, which is a different thing entirely. A coin too
+    // new to have candles when it was scraped is priced here for the first time, and calling
+    // that a number that was never true reads a gap in the record as a lie in it — inflating
+    // the one count that is supposed to mean something.
     const gap = ratio(entry, call.entryPriceUsd ?? 0);
-    found.push({ call, what: 'entry', was: call.entryPriceUsd, now: entry, fiction: gap > CONTRADICTED });
+    const fiction = call.entryPriceUsd !== undefined && gap > CONTRADICTED;
+    found.push({ call, what: 'entry', was: call.entryPriceUsd, now: entry, fiction });
   }
 
-  const peak = await peakSince(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
   if (peak) {
     const sampled = call.athPriceUsd ?? 0;
     // Same rule the tracker settles by: the chart may raise a peak freely, and may lower one
@@ -116,6 +132,15 @@ async function inspect(call: TrackedCall): Promise<Finding[]> {
   }
 
   return found;
+}
+
+/** Reads both figures back off the chart. Named, or a pool ordered the other way answers for
+ * the coin we did not call. */
+async function inspect(call: TrackedCall): Promise<Finding[]> {
+  if (!call.poolAddress) return [];
+  const entry = await priceAt(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
+  const peak = await peakSince(call.chain, call.poolAddress, call.calledAt, undefined, call.address);
+  return judge(call, entry, peak);
 }
 
 /**
